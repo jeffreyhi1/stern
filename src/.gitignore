@@ -1,0 +1,9 @@
+sternd
+*.o
+sternd-test
+.deps
+libstern.a
+libstern.so
+whatsmyip
+tags
+turncat
