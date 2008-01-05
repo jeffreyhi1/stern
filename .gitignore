@@ -1,0 +1,16 @@
+*.o
+*.in
+.deps
+.libs
+*.lo
+*.la
+Makefile
+config.*
+autom4te.cache
+configure
+depcomp
+install-sh
+libtool
+missing
+aclocal.m4
+stamp-h1
