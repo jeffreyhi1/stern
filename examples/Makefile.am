@@ -1,4 +1,4 @@
-bin_PROGRAMS = whatsmyip turncat
+noinst_PROGRAMS = whatsmyip turncat
 INCLUDES = -I$(top_srcdir)/include
 LDADD = -L$(top_builddir)/src -lstern
 
