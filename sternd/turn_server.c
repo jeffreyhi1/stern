@@ -86,6 +86,7 @@ struct client {
 static void on_peer_accept(int fd, short ev, void *arg);
 static void on_peer_read(int fd, short ev, void *arg);
 static void on_peer_recvfrom(int fd, short ev, void *arg);
+static void on_peer_error(struct channel *channel);
 static void on_peer_write(int fd, short ev, void *arg);
 static void on_client_write(int fd, short ev, void *arg);
 
@@ -301,21 +302,50 @@ sockaddr_matches_addr(struct sockaddr *addr1, struct sockaddr *addr2)
 }
 
 //------------------------------------------------------------------------------
-#if 0
+static int
+sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2)
+{
+    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
+    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
+    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
+    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
+
+    return (addr1->sa_family == addr2->sa_family
+            && ((addr1->sa_family == AF_INET
+                 && sina->sin_addr.s_addr == sinb->sin_addr.s_addr
+                 && sina->sin_port == sinb->sin_port)
+                || (addr1->sa_family == AF_INET6
+                    && memcmp(sin6a->sin6_addr.s6_addr,
+                              sin6b->sin6_addr.s6_addr,
+                              16) == 0
+                    && sin6a->sin6_port == sin6b->sin6_port)));
+}
+
+//------------------------------------------------------------------------------
 static struct channel *
-channel_get(struct client *client, struct sockaddr *addr)
+channel_get(struct client *client, struct permission *perm, struct sockaddr *addr)
 {
     struct channel *channel;
+    struct sockaddr saddr;
+    socklen_t slen;
     int i;
 
+    if (client->protocol == IPPROTO_TCP) {
+        for (i = 0; i < client->nchannels; i++) {
+            channel = &client->channels[i];
+            slen = sizeof(saddr);
+            getpeername(channel->peer, &saddr, &slen);
+            if (sockaddr_matches(addr, &saddr))
+                return channel;
+        }
+    }
     for (i = 0; i < client->nchannels; i++) {
         channel = &client->channels[i];
-        if (sockaddr_matches_addr(addr, &channel->addr))
+        if (channel->perm == perm)
             return channel;
     }
-    return NULL;
+    return channel_new(client, perm);
 }
-#endif
 
 //------------------------------------------------------------------------------
 static struct permission *
@@ -334,9 +364,27 @@ perm_get(struct client *client, struct sockaddr *addr)
 
 //------------------------------------------------------------------------------
 static void
+turnind_send_queue_data(struct client *client, struct channel *channel,
+                        struct stun_message *request)
+{
+    if (client->buf)
+        s_free(client->buf);
+    client->buf = request->data;
+    client->len = request->data_len;
+    client->pos = 0;
+    request->data = NULL;
+    request->data_len = 0;
+
+    client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
+    client->ev_peerwrite = channel->ev_peerwrite;
+}
+
+//------------------------------------------------------------------------------
+static void
 turnind_send(struct stun_message *request, struct client *client)
 {
     struct permission *perm;
+    struct channel *channel;
 
     if (!request->peer_address)
         return;
@@ -344,8 +392,33 @@ turnind_send(struct stun_message *request, struct client *client)
     perm = perm_get(client, request->peer_address);
     if (perm == NULL) return;
 
-    if (request->data)
-        assert(0);
+    if (request->data) {
+        channel = channel_get(client, perm, request->peer_address);
+        if (channel == NULL) return;
+        channel->num_clnt = request->channel;
+        channel->perm = perm;
+        turnind_send_queue_data(client, channel, request);
+        return;
+    }
+}
+
+//------------------------------------------------------------------------------
+static void
+turnind_connstat(struct stun_message *request, struct client *client)
+{
+    struct permission *perm;
+    struct channel *channel;
+
+    if (!request->peer_address)
+        return;
+
+    channel = channel_get(client, NULL, request->peer_address);
+    if (channel == NULL) return;
+
+    if (request->connect_status == TURN_CONNSTAT_CLOSED) {
+        on_peer_error(channel);
+        return;
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -360,6 +433,8 @@ turn_stun_responder(struct stun_message *request, struct client *client)
         response = turnreq_allocate(request, client);
     else if (request->message_type == TURN_LISTEN_REQUEST)
         response = turnreq_listen(request, client);
+    else if (request->message_type == TURN_CONN_STAT_INDICATION)
+        turnind_connstat(request, client);
     else if (request->message_type == TURN_SEND_INDICATION)
         turnind_send(request, client);
     else if (IS_INDICATION(request->message_type))
@@ -473,11 +548,6 @@ client_queue_stun_frame(struct stun_message *stun, struct client *client)
 {
     int ret;
 
-    if (stun == NULL) {
-        client->state = MUX_WAITING_FOR_DATA;
-        return;
-    }
-
     client->len = 1024;
     do {
         client->buf = s_realloc(client->buf, client->len);
@@ -510,23 +580,33 @@ channel_queue_connstat(struct channel *channel, struct sockaddr *addr, socklen_t
 
 //------------------------------------------------------------------------------
 static void
-on_peer_error(struct channel *channel)
+on_peer_shutrd(struct channel *channel)
 {
     struct sockaddr addr;
     socklen_t len = sizeof(addr);
 
     event_del(channel->ev_peerread);
-    event_del(channel->ev_peerwrite);
     s_free(channel->ev_peerread);
-    s_free(channel->ev_peerwrite);
     channel->ev_peerread = NULL;
-    channel->ev_peerwrite = NULL;
-
     getsockname(channel->peer, &addr, &len);
+    channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_CLOSED);
+}
+
+//------------------------------------------------------------------------------
+static void
+on_peer_error(struct channel *channel)
+{
+    if (channel->ev_peerread)
+        on_peer_shutrd(channel);
+    if (channel->ev_peerwrite) {
+        event_del(channel->ev_peerwrite);
+        s_free(channel->ev_peerwrite);
+        channel->ev_peerwrite = NULL;
+    }
+
     close(channel->peer);
     channel->peer = -1;
-
-    channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_CLOSED);
+    channel->num_clnt = 0;
 }
 
 
@@ -567,7 +647,7 @@ client_read_at_tag(struct client *client)
     if (client->pos == client->len) {
         client->state = MUX_SPLICING_FROM_CLIENT_READING_DATA;
         client->len = ntohs(client->tag.length);
-        client->buf = s_malloc(client->len);
+        client->buf = s_realloc(client->buf, client->len);
         client->pos = 0;
     }
     return 0;
@@ -586,8 +666,10 @@ client_frame_process(struct client *client)
         return -1;
     }
 
+    client->state = MUX_WAITING_FOR_DATA;
     response = turn_stun_responder(request, client);
-    client_queue_stun_frame(response, client);
+    if (response)
+        client_queue_stun_frame(response, client);
     stun_free(request);
     return 0;
 }
@@ -651,7 +733,7 @@ peer_write_at_data(struct channel *channel)
     ret = send(channel->peer,
                client->buf + client->pos,
                client->len - client->pos,
-               MSG_DONTWAIT);
+               MSG_DONTWAIT | MSG_NOSIGNAL);
     if (is_fatal(ret, errno)) {
         s_free(client->buf);
         client->buf = NULL;
@@ -678,7 +760,7 @@ peer_read_at_wait(struct channel *channel)
 {
     struct client *client = channel->client;
     client->state = MUX_SPLICING_TO_CLIENT_READING;
-    client->buf = s_malloc(BUFFER_MAX);
+    client->buf = s_realloc(client->buf, BUFFER_MAX);
     client->len = BUFFER_MAX;
     return 0;
 }
@@ -690,11 +772,11 @@ peer_read_at_data(struct channel *channel)
     struct client *client = channel->client;
     int ret;
 
-    ret = recv(channel->peer,
-               client->buf,
-               client->len,
-               MSG_DONTWAIT);
-    if (is_fatal(ret, errno)) {
+    ret = recv(channel->peer, client->buf, client->len, MSG_DONTWAIT);
+    if (ret == 0) {
+        on_peer_shutrd(channel);
+        return 0;
+    } else if (is_fatal(ret, errno)) {
         s_free(client->buf);
         client->buf = NULL;
         client->len = 0;

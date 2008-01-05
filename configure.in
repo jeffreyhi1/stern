@@ -39,5 +39,7 @@ AC_FUNC_MEMCMP
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([inet_ntoa memmove memset socket strdup])
 
+CFLAGS="-O0 -g"
+
 AC_CONFIG_FILES([Makefile include/Makefile libstern/Makefile sternd/Makefile examples/Makefile tests/Makefile])
 AC_OUTPUT

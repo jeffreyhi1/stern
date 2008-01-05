@@ -40,8 +40,11 @@ turn_permit(turn_socket_t socket, struct sockaddr *addr, socklen_t len);
 ssize_t
 turn_recvfrom(turn_socket_t socket, char *buf, size_t len, struct sockaddr *addr, socklen_t *alen);
 
-int
+ssize_t
 turn_sendto(turn_socket_t socket, char *buf, size_t len, struct sockaddr *addr, socklen_t alen);
+
+int
+turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen);
 
 void
 turn_close(turn_socket_t socket);

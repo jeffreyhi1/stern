@@ -352,6 +352,19 @@ allocate_string_from_attr(char **str, attribute_t * attr)
 
 //------------------------------------------------------------------------------
 static void
+allocate_buf_from_attr(char **buf, size_t *len, attribute_t * attr)
+{
+    size_t alen = ntohs(attr->len);
+
+    if (alen == 0)
+        return;
+    *buf = s_malloc(alen);
+    memcpy(*buf, attr->v.bytes, alen);
+    *len = alen;
+}
+
+//------------------------------------------------------------------------------
+static void
 copy_uint32_from_attr(unsigned int *val, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
@@ -455,6 +468,18 @@ copy_string_to_attr(attribute_t * attr, size_t len, char *str)
     attr->len = htons(alen);
     memcpy(attr->v.bytes, str, alen);
     return PAD4(alen) + STUN_AHLEN;
+}
+
+//------------------------------------------------------------------------------
+static int
+copy_buf_to_attr(attribute_t * attr, size_t len, char *buf, size_t blen)
+{
+    if (PAD4(blen) + STUN_AHLEN > len)
+        return -1;
+    attr->len = htons(blen);
+    memcpy(attr->v.bytes, buf, blen);
+    memset(blen + (void *) attr, 0, PAD4(blen) - blen);
+    return PAD4(blen) + STUN_AHLEN;
 }
 
 //------------------------------------------------------------------------------
@@ -705,6 +730,19 @@ realm_to_bytes(char *buf, size_t pos, size_t len, struct stun_message *stun)
 
 //------------------------------------------------------------------------------
 static int
+data_to_bytes(char *buf, size_t pos, size_t len, struct stun_message *stun)
+{
+    attribute_t *attr = (attribute_t *) (buf + pos);
+    int ret = copy_buf_to_attr(attr, len - pos, stun->data, stun->data_len);
+
+    if (ret == -1)
+        return pos;
+    attr->type = htons(ATTR_DATA);
+    return pos + ret;
+}
+
+//------------------------------------------------------------------------------
+static int
 lifetime_to_bytes(char *buf, size_t pos, size_t len, struct stun_message *stun)
 {
     attribute_t *attr = (attribute_t *) (buf + pos);
@@ -837,6 +875,10 @@ stun_to_bytes(char *buf, size_t len, struct stun_message *stun)
     if (stun->realm)
         pos = realm_to_bytes(buf, pos, len, stun);
 
+    /* Data */
+    if (stun->data)
+        pos = data_to_bytes(buf, pos, len, stun);
+
     /* Mapped address */
     if (stun->mapped_address)
         pos = mapped_address_to_bytes(buf, pos, len, stun);
@@ -933,6 +975,10 @@ stun_from_bytes(char *buf, size_t *len)
 
             case ATTR_SERVER:
                 allocate_string_from_attr(&stun->server, attr);
+                break;
+
+            case ATTR_DATA:
+                allocate_buf_from_attr(&stun->data, &stun->data_len, attr);
                 break;
 
             case ATTR_REALM:

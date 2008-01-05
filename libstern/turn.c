@@ -143,7 +143,20 @@ sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2)
 
 //------------------------------------------------------------------------------
 static struct channel *
-channel_get(struct turn_socket *turn, int num_peer)
+channel_by_addr(struct turn_socket *turn, struct sockaddr *addr, socklen_t len)
+{
+    int i;
+
+    for (i = 0; i < turn->nchannels; i++)
+        if (sockaddr_matches(&turn->channels[i].addr, addr))
+            return &turn->channels[i];
+    return NULL;
+}
+
+
+//------------------------------------------------------------------------------
+static struct channel *
+channel_by_num(struct turn_socket *turn, int num_peer)
 {
     int i;
 
@@ -493,7 +506,7 @@ turn_recvfrom_raw(struct turn_socket *turn, char *buf, size_t len,
 {
     struct channel *channel;
 
-    channel = channel_get(turn, turn->last_channel);
+    channel = channel_by_num(turn, turn->last_channel);
     if (!channel)
         RETURN_ERROR(EAGAIN, -1);
 
@@ -517,7 +530,7 @@ turn_recvfrom_cont(struct turn_socket *turn, char *buf, size_t len,
     struct channel *channel;
     int ret;
 
-    channel = channel_get(turn, turn->last_channel);
+    channel = channel_by_num(turn, turn->last_channel);
     if (!channel)
         RETURN_ERROR(EAGAIN, -1);
 
@@ -544,7 +557,7 @@ turn_recvfrom_connstat(struct turn_socket *turn, struct stun_message *stun,
     if (!stun->peer_address)
         RETURN_ERROR(EAGAIN, -1);
 
-    if ((channel = channel_get(turn, stun->channel)) == NULL) {
+    if ((channel = channel_by_num(turn, stun->channel)) == NULL) {
         channel = channel_new(turn, stun->peer_address,
                               stun->peer_address_len);
         channel->num_peer = stun->channel;
@@ -609,6 +622,102 @@ turn_recvfrom(turn_socket_t socket, char *buf, size_t len,
                 return turn_recvfrom_stun(turn, buf, len, addr, alen);
             else
                 return turn_recvfrom_raw(turn, buf, len, addr, alen);
+
+        default:
+            RETURN_ERROR(EINVAL, -1);
+    }
+}
+
+//------------------------------------------------------------------------------
+static ssize_t
+turn_sendto_raw(struct turn_socket *turn, char *buf, size_t len, struct channel *channel)
+{
+    int ret;
+
+    ret = send_to_server(turn, buf, len, channel->num_self);
+    if (ret == -1) return -1;
+
+    return len;
+}
+
+//------------------------------------------------------------------------------
+static ssize_t
+turn_sendto_stun(struct turn_socket *turn, char *buf, size_t len, struct channel *channel)
+{
+    struct stun_message *indication;
+    char sbuf[65536];
+    size_t slen;
+    int ret;
+
+    indication = stun_new(TURN_SEND_INDICATION);
+    stun_set_sockaddr(indication, ATTR_PEER_ADDRESS, &channel->addr, channel->addrlen);
+    indication->channel = channel->num_self;
+    stun_set_data(indication, buf, len);
+    slen = stun_to_bytes(sbuf, sizeof(sbuf), indication);
+    ret = send_to_server(turn, sbuf, slen, TURN_CHANNEL_CTRL);
+    stun_free(indication);
+    if (is_sockerr(turn, ret, errno, TS_NONE, TS_NONE))
+        return -1;
+    channel->confirmed = 1;
+    return len;
+}
+
+//------------------------------------------------------------------------------
+ssize_t
+turn_sendto(turn_socket_t socket, char *buf, size_t len,
+            struct sockaddr *addr, socklen_t alen)
+{
+    struct turn_socket *turn = FROM_TS(socket);
+    struct channel *channel;
+    int ret;
+
+    /* Check no operation is pending */
+    if (turn->op != TS_NONE && turn->op != TS_RECV)
+        RETURN_ERROR(EINVAL, -1);
+
+    switch (turn->state) {
+        case TS_LISTEN_DONE:
+            if ((channel = channel_by_addr(turn, addr, alen)) == NULL)
+                channel = channel_new(turn, addr, alen);
+            if (!channel->confirmed)
+                return turn_sendto_stun(turn, buf, len, channel);
+            else
+                return turn_sendto_raw(turn, buf, len, channel);
+
+        default:
+            RETURN_ERROR(EINVAL, -1);
+    }
+}
+
+//------------------------------------------------------------------------------
+ssize_t
+turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen)
+{
+    struct turn_socket *turn = FROM_TS(socket);
+    struct stun_message *indication;
+    struct channel *channel;
+    char sbuf[1024];
+    size_t slen;
+    int ret;
+
+    /* Check no operation is pending */
+    if (turn->op != TS_NONE && turn->op != TS_RECV)
+        RETURN_ERROR(EINVAL, -1);
+
+    switch (turn->state) {
+        case TS_LISTEN_DONE:
+            if ((channel = channel_by_addr(turn, addr, alen)) == NULL)
+                channel = channel_new(turn, addr, alen);
+            indication = stun_new(TURN_CONN_STAT_INDICATION);
+            stun_set_sockaddr(indication, ATTR_PEER_ADDRESS, &channel->addr, channel->addrlen);
+            indication->channel = channel->num_self;
+            indication->connect_status = TURN_CONNSTAT_CLOSED;
+            slen = stun_to_bytes(sbuf, sizeof(sbuf), indication);
+            ret = send_to_server(turn, sbuf, slen, TURN_CHANNEL_CTRL);
+            stun_free(indication);
+            if (is_sockerr(turn, ret, errno, TS_NONE, TS_NONE))
+                return -1;
+            return 0;
 
         default:
             RETURN_ERROR(EINVAL, -1);

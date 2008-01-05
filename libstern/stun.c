@@ -283,6 +283,18 @@ stun_set_sockaddr(struct stun_message *stun, int attr, struct sockaddr *addr, so
 
 //------------------------------------------------------------------------------
 int
+stun_set_data(struct stun_message *stun, char *buf, size_t len)
+{
+    if (stun->data)
+        s_free(stun->data);
+    stun->data = s_malloc(len);
+    memcpy(stun->data, buf, len);
+    stun->data_len = len;
+    return 0;
+}
+
+//------------------------------------------------------------------------------
+int
 stun_xid_matches(struct stun_message *a, struct stun_message *b)
 {
     return (memcmp(a->xact_id, b->xact_id, STUN_XIDLEN) == 0);
