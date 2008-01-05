@@ -101,6 +101,9 @@ int
 stun_set_sockaddr(struct stun_message *stun, int attr, struct sockaddr *addr, size_t len);
 
 int
+stun_set_data(struct stun_message *stun, char *buf, size_t len);
+
+int
 stun_xid_matches(struct stun_message *a, struct stun_message *b);
 
 int
