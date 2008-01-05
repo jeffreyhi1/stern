@@ -14,15 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <netinet/in.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <event.h>
-
-#include <common.h>
-
-#define PORT_STUN     3478
-#define BUFFER_MAX    8192
+#include "sternd.h"
 
 struct server {
     int sock;

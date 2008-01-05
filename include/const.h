@@ -14,17 +14,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef __COMMON_H
-#define __COMMON_H
-
-#include <assert.h>
-#include <inttypes.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <stdlib.h>
-#include <string.h>
-#include "stun.h"
+#ifndef __CONST_H
+#define __CONST_H
 
 #define STUN_MAGIC                0x2112A442
 #define STUN_FINGERPRINT_MAGIC    0x5354554e
@@ -92,48 +83,17 @@
 #define TURN_TRANSPORT_UDP        0
 #define TURN_TRANSPORT_TCP        1
 
-#define PAD4(x)                    (((x) + 3) & ~0x3)
+#define PAD4(x)                   (((x) + 3) & ~0x3)
 
-#define IS_REQUEST(msg_type)       (((msg_type) & 0x0110) == 0x0000)
-#define IS_INDICATION(msg_type)    (((msg_type) & 0x0110) == 0x0010)
-#define IS_SUCCESS_RESP(msg_type)  (((msg_type) & 0x0110) == 0x0100)
-#define IS_ERR_RESP(msg_type)      (((msg_type) & 0x0110) == 0x0110)
+#define IS_REQUEST(msg_type)      (((msg_type) & 0x0110) == 0x0000)
+#define IS_INDICATION(msg_type)   (((msg_type) & 0x0110) == 0x0010)
+#define IS_SUCCESS_RESP(msg_type) (((msg_type) & 0x0110) == 0x0100)
+#define IS_ERR_RESP(msg_type)     (((msg_type) & 0x0110) == 0x0110)
 
-#define BUFFER_MIN     256
-#define BUFFER_MAX     8192
+#define PORT_STUN                 3478
+#define PORT_TURN                 8778
 
-struct buffer {
-    size_t len, pos;
-    void *bytes;
-};
-
-static inline void *s_malloc(size_t len)
-{
-    void *ptr = malloc(len);
-    assert(ptr);
-    return ptr;
-}
-
-static inline void *s_realloc(void *ptr, size_t len)
-{
-    ptr = realloc(ptr, len);
-    assert(ptr);
-    return ptr;
-}
-
-static inline void s_free(void *ptr)
-{
-    free(ptr);
-}
-
-typedef struct stun_message *(stun_responder)(struct stun_message *, struct sockaddr *, void *);
-
-
-void *stun_tcp_init();
-void *stun_tcp_adopt(int sock, stun_responder *fn, void *arg);
-void stun_tcp_stop(void *arg);
-void *stun_udp_init();
-const char *stun_error_reason(int error_code);
-int stun_cannot_comprehend(struct stun_message *req);
+#define TURN_TAGLEN               4
+#define TURN_CHANNEL_CTRL         0
 
 #endif

@@ -14,18 +14,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include "libstern.h"
 
-#include <errno.h>
-#include <common.h>
-#include <turn.h>
-
-#define TO_TS(x)    ((turn_socket_t) (x))
-#define FROM_TS(x)  ((struct turn_socket *) (x))
+#define TO_TS(x)            ((turn_socket_t) (x))
+#define FROM_TS(x)          ((struct turn_socket *) (x))
 #define RETURN_ERROR(x,y)   do { errno = (x); return (y); } while(0)
 #define ABORT_SOCKET(t,x,y) do {(t)->state = TS_CLOSED; RETURN_ERROR((x),(y)); } while(0)
-
-#define TURN_TAGLEN       4
-#define TURN_CHANNEL_CTRL 0
 
 #pragma pack(push)
 struct tag {

@@ -14,23 +14,18 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <netinet/in.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <event.h>
+#include "sternd.h"
 
-#include <common.h>
-
-#define PORT_STUN      3478
-#define CLIENT_TIMEOUT 120
+struct buffer {
+    size_t len, pos;
+    void *bytes;
+};
 
 struct server {
     int sock;
     int shut;
-    void *cb_arg;
     int nclients;
     struct event ev_accept;
-    stun_responder *stun_cb;
     struct timeval *client_timeout;
 };
 
@@ -118,6 +113,13 @@ client_expand_write_buffer(struct client *client)
 }
 
 //------------------------------------------------------------------------------
+static struct stun_message *
+stun_default_responser(struct stun_message *request, struct sockaddr *addr)
+{
+    return stun_respond_to(request, addr);
+}
+
+//------------------------------------------------------------------------------
 static void
 client_queue_response(struct client *client, struct stun_message *request)
 {
@@ -128,7 +130,7 @@ client_queue_response(struct client *client, struct stun_message *request)
 
     if (client->server->shut)
         return;
-    response = client->server->stun_cb(request, &client->addr, client->server->cb_arg);
+    response = stun_default_responser(request, &client->addr);
     if (response) {
         ret = -1;
         do {
@@ -294,13 +296,6 @@ on_srv_accept(int fd, short ev, void *arg)
 }
 
 //------------------------------------------------------------------------------
-static struct stun_message *
-stun_default_responser(struct stun_message *request, struct sockaddr *addr, void *arg)
-{
-    return stun_respond_to(request, addr);
-}
-
-//------------------------------------------------------------------------------
 void
 stun_tcp_stop(void *arg)
 {
@@ -313,14 +308,12 @@ stun_tcp_stop(void *arg)
 
 //------------------------------------------------------------------------------
 static struct server *
-server_new(int  fd, stun_responder *fn, void *arg)
+server_new(int  fd)
 {
     struct server *server;
 
     server = (struct server *) s_malloc(sizeof(struct server));
     server->sock = fd;
-    server->stun_cb = fn;
-    server->cb_arg = arg;
     server->shut = 0;
     server->client_timeout = &timeout;
     if (fd != -1) {
@@ -329,21 +322,6 @@ server_new(int  fd, stun_responder *fn, void *arg)
     }
     return server;
 }
-
-//------------------------------------------------------------------------------
-void *
-stun_tcp_adopt(int sock, stun_responder *fn, void *arg)
-{
-    struct server *server;
-    struct client *client;
-
-    server = server_new(-1, fn, arg);
-    server->client_timeout = NULL;
-    client = client_new(sock, NULL, server);
-
-    return server;
-}
-
 
 //------------------------------------------------------------------------------
 void *
@@ -365,6 +343,6 @@ stun_tcp_init()
         return NULL;
     }
 
-    return server_new(fd, stun_default_responser, NULL);
+    return server_new(fd);
 }
 
