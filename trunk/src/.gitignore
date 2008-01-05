@@ -7,3 +7,6 @@ libstern.so
 whatsmyip
 tags
 turncat
+config.h
+config.h.in
+stamp-h1
