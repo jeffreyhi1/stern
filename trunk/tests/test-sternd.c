@@ -27,7 +27,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-#include <stun.h>
+#include <stern/stun.h>
 
 #define PORT_STUN     3478
 #define REQUEST_SIZE  4192

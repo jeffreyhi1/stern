@@ -25,10 +25,11 @@
 #include <errno.h>
 #include <assert.h>
 
+#include <stern/stun.h>
+#include <stern/turn.h>
+
 #include "config.h"
 #include "const.h"
-#include "stun.h"
-#include "turn.h"
 #include "internal.h"
 
 #define BUFFER_MIN     256

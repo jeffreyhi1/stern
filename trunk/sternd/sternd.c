@@ -14,11 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <sys/time.h>
-#include <sys/types.h>
-#include <event.h>
-
-#include <stun.h>
+#include "sternd.h"
 
 int main(int argc, char **argv)
 {
@@ -34,4 +30,3 @@ int main(int argc, char **argv)
 
     return 0;
 }
-

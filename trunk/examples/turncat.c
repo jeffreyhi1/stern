@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include <error.h>
 #include <errno.h>
-#include <turn.h>
 
+#include <stern/turn.h>
 
 int main(int argc, char **argv)
 {
