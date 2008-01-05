@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <event.h>
 
-#include "common.h"
+#include <common.h>
 
 #define PORT_STUN     3478
 #define BUFFER_MAX    8192

@@ -24,7 +24,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "stun.h"
+#include <stun.h>
 
 const char *
 test_message_type(struct stun_message *stun, int type)
