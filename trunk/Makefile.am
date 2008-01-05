@@ -1,1 +1,1 @@
-SUBDIRS = include src sternd examples
+SUBDIRS = include src sternd examples tests
