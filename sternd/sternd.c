@@ -18,7 +18,7 @@
 #include <sys/types.h>
 #include <event.h>
 
-#include "stun.h"
+#include <stun.h>
 
 int main(int argc, char **argv)
 {

@@ -1,8 +1,7 @@
 bin_PROGRAMS = whatsmyip turncat
-INCLUDES = -I../include
+INCLUDES = -I$(top_srcdir)/include
+LDADD = -L$(top_builddir)/src -lstern
 
 whatsmyip_SOURCES = whatsmyip.c
-whatsmyip_LDADD = ../src/libstern.la
 
 turncat_SOURCES = turncat.c
-turncat_LDADD = ../src/libstern.la

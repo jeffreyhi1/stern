@@ -16,7 +16,7 @@
  */
 #include <syslog.h>
 #include <stdio.h>
-#include "common.h"
+#include <common.h>
 
 static char *server = "sternd/1.0";
 static char *realm = NULL;

@@ -16,8 +16,8 @@
  */
 
 #include <errno.h>
-#include "common.h"
-#include "turn.h"
+#include <common.h>
+#include <turn.h>
 
 #define TO_TS(x)    ((turn_socket_t) (x))
 #define FROM_TS(x)  ((struct turn_socket *) (x))

@@ -17,7 +17,7 @@
 #include <time.h>
 #include <zlib.h>
 #include <openssl/hmac.h>
-#include "common.h"
+#include <common.h>
 
 #define CACHE_TIMEOUT       120
 #define CACHE_FULL          64
