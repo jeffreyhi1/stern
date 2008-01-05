@@ -13,7 +13,7 @@ int main(int argc, char **argv)
 
     /* Connect to the server */
     srv.sin_family = AF_INET;
-    srv.sin_addr.s_addr = inet_addr("192.168.11.3");
+    srv.sin_addr.s_addr = inet_addr("127.0.0.1");
     srv.sin_port = htons(3478);
 
     sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
