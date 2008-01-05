@@ -11,7 +11,7 @@ int main(int argc, char **argv)
 {
     struct sockaddr srv, self, peer;
     struct sockaddr_in *sin;
-    char buf[1024], sbuf[16];
+    char buf[8192], sbuf[16];
     unsigned int len;
     int ret;
     turn_socket_t sock;
@@ -47,7 +47,7 @@ int main(int argc, char **argv)
 
     sin = (struct sockaddr_in *) &peer;
     while (1) {
-        ret = turn_recvfrom(sock, buf, 1024, &peer, &len);
+        ret = turn_recvfrom(sock, buf, 8192, &peer, &len);
         if (ret == -1 && errno != EAGAIN)
             error(-1, errno, "turn_recvfrom");
         else if (ret == 0)

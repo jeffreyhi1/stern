@@ -954,6 +954,7 @@ stun_from_bytes(char *buf, size_t *len)
     int num_other = 0;
 
     stun = allocate_stun_from_bytes(buf, len);
+    if (!stun) return NULL;
 
     attr = (attribute_t *) (buf + STUN_HLEN);
     while ((STUN_AHLEN + (char *) attr) < (buf + *len)) {
