@@ -2,7 +2,8 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <stun.h>
+
+#include <stern/stun.h>
 
 int main(int argc, char **argv)
 {

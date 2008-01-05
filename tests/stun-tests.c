@@ -24,7 +24,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include <stun.h>
+#include <stern/stun.h>
 
 const char *
 test_ok_response(struct stun_message *response, struct stun_message *request)
