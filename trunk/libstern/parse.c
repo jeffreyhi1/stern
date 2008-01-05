@@ -14,10 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <time.h>
-#include <zlib.h>
-#include <openssl/hmac.h>
-#include <common.h>
+#include "libstern.h"
 
 #define CACHE_TIMEOUT       120
 #define CACHE_FULL          64
@@ -69,7 +66,6 @@ typedef struct {
         uint32_t u32;
     } v;
 } attribute_t;
-
 #pragma pack(pop)
 
 typedef struct password {

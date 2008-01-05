@@ -14,19 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <netinet/in.h>
-#include <sys/time.h>
-#include <time.h>
-#include <unistd.h>
-#include <event.h>
-#include <errno.h>
-
-
-#include <common.h>
-
-#define PORT_TURN         8778
-#define TURN_TAGLEN       4
-#define TURN_CHANNEL_CTRL 0
+#include "sternd.h"
 
 #define DEFAULT_LIFETIME  300
 #define DEFAULT_BANDWIDTH 32

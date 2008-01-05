@@ -14,12 +14,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <syslog.h>
-#include <stdio.h>
-#include <common.h>
+#include "libstern.h"
 
 static char *server = "sternd/1.0";
-static char *realm = NULL;
 
 //------------------------------------------------------------------------------
 static char *
@@ -138,14 +135,6 @@ make_binding_response(struct stun_message *req, struct sockaddr *addr)
     resp->xor_mapped_address = s_malloc(sizeof(struct sockaddr));
     memcpy(resp->xor_mapped_address, addr, sizeof(struct sockaddr));
 
-    syslog(LOG_INFO, "Binding response for %s%s%s%s%s%s",
-           format_addr(buf, sizeof(buf), addr),
-           req->username || req->realm ? " (" : "",
-           req->username ? req->username : "",
-           req->realm ? "@" : "",
-           req->realm ? req->realm : "",
-           req->username || req->realm ? ")" : "");
-
     return resp;
 }
 
@@ -154,16 +143,12 @@ static struct stun_message *
 make_error_response(struct stun_message *req, struct sockaddr *addr, int error)
 {
     struct stun_message *resp;
-    char buf[64];
 
     /* Init response */
     resp = stun_init_response(req->message_type | STUN_ERROR, req);
 
     /* Error */
     resp->error_code = error;
-
-    syslog(LOG_INFO, "Error response %d for %s", error,
-           format_addr(buf, sizeof(buf), addr));
 
     return resp;
 }
