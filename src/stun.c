@@ -128,7 +128,7 @@ make_binding_response(struct stun_message *req, struct sockaddr *addr)
     char buf[64];
 
     /* Init response */
-    resp = stun_init_response(req->message_type | STUN_RESPONSE, req);
+    resp = stun_init_response(req->message_type | STUN_SUCCESS, req);
 
     /* Mapped address */
     resp->mapped_address = s_malloc(sizeof(struct sockaddr));
@@ -307,9 +307,24 @@ stun_xid_matches(struct stun_message *a, struct stun_message *b)
 int
 stun_is_ok_response(struct stun_message *response, struct stun_message *request)
 {
-    if (!response || !IS_SUCCESS_RESP(response->message_type))
+    if (!response)
         return 0;
     if (!stun_xid_matches(response, request))
+        return 0;
+    if (response->message_type != (response->message_type | STUN_SUCCESS))
+        return 0;
+    return 1;
+}
+
+//------------------------------------------------------------------------------
+int
+stun_is_err_response(struct stun_message *response, struct stun_message *request)
+{
+    if (!response)
+        return 0;
+    if (!stun_xid_matches(response, request))
+        return 0;
+    if (response->message_type != (response->message_type | STUN_ERROR))
         return 0;
     return 1;
 }

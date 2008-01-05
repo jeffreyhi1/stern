@@ -58,7 +58,7 @@
 #define ATTR_SERVER               0x8022
 #define ATTR_FINGERPRINT          0x8028
 
-#define STUN_RESPONSE             0x0100
+#define STUN_SUCCESS              0x0100
 #define STUN_ERROR                0x0110
 
 #define TURN_ALLOCATION_REQUEST   0x0003

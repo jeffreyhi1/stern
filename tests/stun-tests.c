@@ -27,13 +27,31 @@
 #include <stun.h>
 
 const char *
-test_message_type(struct stun_message *stun, int type)
+test_ok_response(struct stun_message *response, struct stun_message *request)
 {
-    if (!stun)
+    if (!response)
         return "FAIL (No response)";
 
-    if (stun->message_type != type)
-        return "FAIL (Message type incorrect)";
+    if (!stun_xid_matches(response, request))
+        return "FAIL (XactID mismatch)";
+
+    if (!stun_is_ok_response(response, request))
+        return "FAIL (Not OK response)";
+
+    return NULL;
+}
+
+const char *
+test_err_response(struct stun_message *response, struct stun_message *request)
+{
+    if (!response)
+        return "FAIL (No response)";
+
+    if (!stun_xid_matches(response, request))
+        return "FAIL (XactID mismatch)";
+
+    if (!stun_is_err_response(response, request))
+        return "FAIL (Not ERR response)";
 
     return NULL;
 }

@@ -40,10 +40,12 @@ static struct sockaddr_in server;
 
 static struct timeval timeout = {SERVER_TIMEOUT, 0};
 
-const char *test_message_type(struct stun_message *, int);
+const char *test_ok_response(struct stun_message *, struct stun_message *);
+const char *test_err_response(struct stun_message *, struct stun_message *);
 const char *test_mapped_address(struct stun_message *, struct sockaddr *);
 void reconnect();
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test1_req()
 {
@@ -56,7 +58,7 @@ test1_resp(struct stun_message *resp, struct stun_message *req)
 {
     const char *ret;
 
-    ret = test_message_type(resp, STUN_BINDING_RESPONSE);
+    ret = test_ok_response(resp, req);
     if (ret) return ret;
 
     ret = test_mapped_address(resp, (struct sockaddr *)&local);
@@ -65,6 +67,7 @@ test1_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test2_req()
 {
@@ -78,7 +81,7 @@ test2_resp(struct stun_message *resp, struct stun_message *req)
 {
     const char *ret;
 
-    ret = test_message_type(resp, STUN_BINDING_RESPONSE);
+    ret = test_ok_response(resp, req);
     if (ret) return ret;
 
     ret = test_mapped_address(resp, (struct sockaddr *)&local);
@@ -90,6 +93,7 @@ test2_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test3_req()
 {
@@ -113,6 +117,7 @@ test3_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test4_req()
 {
@@ -133,7 +138,7 @@ test4_resp(struct stun_message *resp, struct stun_message *req)
 {
     const char *ret;
 
-    ret = test_message_type(resp, STUN_BINDING_ERROR);
+    ret = test_err_response(resp, req);
     if (ret) return ret;
 
     if (resp->error_code != 400)
@@ -142,6 +147,7 @@ test4_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test5_req()
 {
@@ -158,7 +164,7 @@ test5_resp(struct stun_message *resp, struct stun_message *req)
 {
     const char *ret;
 
-    ret = test_message_type(resp, STUN_BINDING_RESPONSE);
+    ret = test_ok_response(resp, req);
     if (ret) return ret;
 
     ret = test_mapped_address(resp, (struct sockaddr *)&local);
@@ -170,6 +176,7 @@ test5_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 struct stun_message *
 test6_req()
 {
@@ -186,7 +193,7 @@ test6_resp(struct stun_message *resp, struct stun_message *req)
 {
     const char *ret;
 
-    ret = test_message_type(resp, STUN_BINDING_ERROR);
+    ret = test_err_response(resp, req);
     if (ret) return ret;
 
     if (resp->error_code != 431)
@@ -195,6 +202,7 @@ test6_resp(struct stun_message *resp, struct stun_message *req)
     return "OK";
 }
 
+//------------------------------------------------------------------------------
 typedef struct stun_message *(fn_test_request)();
 typedef const char *(fn_test_response)(struct stun_message *resp, struct stun_message *req);
 typedef void(fn_test_polish)(char *, size_t);
@@ -214,6 +222,7 @@ struct {
     {NULL, NULL, NULL, NULL}
 };
 
+//------------------------------------------------------------------------------
 void sternd_read(int fd, short event, void *args)
 {
     static int test = 0;
@@ -260,6 +269,7 @@ void sternd_read(int fd, short event, void *args)
     }
 }
 
+//------------------------------------------------------------------------------
 void reconnect()
 {
     socklen_t len;
@@ -278,6 +288,7 @@ void reconnect()
     getsockname(sock, (struct sockaddr *)&local, &len);
 }
 
+//------------------------------------------------------------------------------
 int main(int argc, char **argv)
 {
     event_init();
