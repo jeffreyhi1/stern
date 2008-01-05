@@ -5,7 +5,7 @@ AC_PREREQ(2.61)
 AC_INIT(stern, 0.1, saikat@cs.cornell.edu)
 AM_INIT_AUTOMAKE
 
-AC_CONFIG_SRCDIR([src/stun.c])
+AC_CONFIG_SRCDIR([libstern/stun.c])
 AC_CONFIG_HEADER([include/config.h])
 
 # Checks for programs.
@@ -39,5 +39,5 @@ AC_FUNC_MEMCMP
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([inet_ntoa memmove memset socket strdup])
 
-AC_CONFIG_FILES([Makefile include/Makefile src/Makefile sternd/Makefile examples/Makefile tests/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile libstern/Makefile sternd/Makefile examples/Makefile tests/Makefile])
 AC_OUTPUT
