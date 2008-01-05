@@ -5,8 +5,8 @@ AC_PREREQ(2.61)
 AC_INIT(stern, 0.1, saikat@cs.cornell.edu)
 AM_INIT_AUTOMAKE
 
-AC_CONFIG_SRCDIR([src/sternd.c])
-AC_CONFIG_HEADER([src/config.h])
+AC_CONFIG_SRCDIR([src/stun.c])
+AC_CONFIG_HEADER([include/config.h])
 
 # Checks for programs.
 AC_PROG_CC
@@ -14,11 +14,8 @@ AM_PROG_LIBTOOL
 
 
 # Checks for libraries.
-# FIXME: Replace `main' with a function in `-levent':
 AC_CHECK_LIB([event], [event_set])
-# FIXME: Replace `main' with a function in `-lssl':
 AC_CHECK_LIB([ssl], [MD5])
-# FIXME: Replace `main' with a function in `-lz':
 AC_CHECK_LIB([z], [crc32])
 
 # Checks for header files.
@@ -42,5 +39,5 @@ AC_FUNC_MEMCMP
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([inet_ntoa memmove memset socket strdup])
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile sternd/Makefile examples/Makefile])
 AC_OUTPUT
