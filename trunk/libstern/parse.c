@@ -248,23 +248,24 @@ is_stun_message(char *buf, size_t len)
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 set_fingerprint_from_attr(struct stun_message *stun, char *buf,
                           attribute_t * attr)
 {
     uint32_t crc;
 
     if (ntohs(attr->len) != 4)
-        return;
+        return -1;
     stun->fingerprint = STUN_ATTR_PRESENT_AND_VALIDATED;
     crc = crc32(0, (uint8_t *) buf, ((char *) attr) - buf);
     crc ^= STUN_FINGERPRINT_MAGIC;
     if (crc != ntohl(attr->v.u32))
         stun->fingerprint = STUN_ATTR_PRESENT_BUT_INVALID;
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 set_message_integrity_from_attr(struct stun_message *stun, char *buf,
                                 attribute_t * attr)
 {
@@ -274,10 +275,10 @@ set_message_integrity_from_attr(struct stun_message *stun, char *buf,
     int len;
 
     if (ntohs(attr->len) != hmac_len)
-        return;
+        return -1;
     stun->message_integrity = STUN_ATTR_PRESENT;
     if (get_auth_key(&key, &len, stun) == -1)
-        return;
+        return 0;
     HMAC(EVP_sha1(), key, len, (uint8_t *) buf, ((char *) attr) - buf,
          hmac, &hmac_len);
     if (memcmp(attr->v.bytes, hmac, hmac_len) != 0) {
@@ -290,6 +291,7 @@ set_message_integrity_from_attr(struct stun_message *stun, char *buf,
             memcpy(stun->_password, key, len);
         }
     }
+    return 0;
 }
 
 //------------------------------------------------------------------------------
@@ -336,64 +338,68 @@ allocate_other_from_attr(struct stun_message *stun, int num_other,
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 allocate_string_from_attr(char **str, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
     char *buf;
 
     if (alen == 0)
-        return;
+        return 0;
     buf = s_malloc(alen + 1);
     memcpy(buf, attr->v.bytes, alen);
     buf[alen] = '\0';
     *str = buf;
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 allocate_buf_from_attr(char **buf, size_t *len, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
 
     if (alen == 0)
-        return;
+        return 0;
     *buf = s_malloc(alen);
     memcpy(*buf, attr->v.bytes, alen);
     *len = alen;
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 copy_uint32_from_attr(unsigned int *val, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
 
     if (alen != 4)
-        return;
+        return -1;
     *val = ntohl(attr->v.u32);
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 copy_uint16_from_attr(unsigned int *val, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
 
     if (alen != 4)
-        return;
+        return -1;
     *val = ntohs(attr->v.u16.num[0]);
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 allocate_error_from_attr(struct stun_message *stun, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
     char *buf;
 
     if (alen < 4)
-        return;
+        return -1;
     stun->error_code = attr->v.error.class * 100 + attr->v.error.number;
     if (alen == 4)
         return;
@@ -401,10 +407,11 @@ allocate_error_from_attr(struct stun_message *stun, attribute_t * attr)
     memcpy(buf, attr->v.error.reason, alen - 4);
     buf[alen] = '\0';
     stun->error_reason = buf;
+    return 0;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 allocate_sockaddr_from_attr(struct sockaddr **addr, size_t *addrlen, attribute_t * attr)
 {
     struct sockaddr_in *sin;
@@ -413,16 +420,17 @@ allocate_sockaddr_from_attr(struct sockaddr **addr, size_t *addrlen, attribute_t
 
     if (attr->v.addr.family == STUN_ADDR_IP4) {
         if (ntohs(attr->len) != 8)
-            return;
+            return -1;
         sin = s_malloc(sizeof(struct sockaddr_in));
         sin->sin_family = AF_INET;
         sin->sin_addr.s_addr = attr->v.addr.ip.addr4;
         sin->sin_port = attr->v.addr.port;
         *addr = (struct sockaddr *) sin;
         *addrlen = sizeof(struct sockaddr_in);
+        return 0;
     } else if (attr->v.addr.family == STUN_ADDR_IP6) {
         if (ntohs(attr->len) != 20)
-            return;
+            return -1;
         sin6 = s_malloc(sizeof(struct sockaddr_in6));
         sin6->sin6_family = AF_INET;
         for (i = 0; i < 16; i++)
@@ -430,19 +438,21 @@ allocate_sockaddr_from_attr(struct sockaddr **addr, size_t *addrlen, attribute_t
         sin6->sin6_port = attr->v.addr.port;
         *addr = (struct sockaddr *) sin6;
         *addrlen = sizeof(struct sockaddr_in6);
+        return 0;
     }
+    return -1;
 }
 
 //------------------------------------------------------------------------------
-static void
+static int
 allocate_sockaddr_from_xor_attr(struct sockaddr **addr, size_t *addrlen, attribute_t * attr, uint8_t *buf)
 {
     struct sockaddr_in *sin;
     struct sockaddr_in6 *sin6;
     int i;
 
-    allocate_sockaddr_from_attr(addr, addrlen, attr);
-    if (!*addr) return;
+    if (allocate_sockaddr_from_attr(addr, addrlen, attr) == -1)
+        return -1;
 
     if (attr->v.addr.family == STUN_ADDR_IP4) {
         sin = (struct sockaddr_in *) *addr;
@@ -454,6 +464,7 @@ allocate_sockaddr_from_xor_attr(struct sockaddr **addr, size_t *addrlen, attribu
         for (i = 0; i < 16; i++)
             sin6->sin6_addr.s6_addr[i] ^= buf[i + 4];
     }
+    return 0;
 }
 
 //------------------------------------------------------------------------------
@@ -951,79 +962,81 @@ stun_from_bytes(char *buf, size_t *len)
     struct stun_message *stun;
     attribute_t *attr;
     size_t alen;
-    int num_other = 0;
+    int num_other = 0, err = 0;
 
     stun = allocate_stun_from_bytes(buf, len);
     if (!stun) return NULL;
 
     attr = (attribute_t *) (buf + STUN_HLEN);
-    while ((STUN_AHLEN + (char *) attr) < (buf + *len)) {
+    while (err == 0 && (STUN_AHLEN + (char *) attr) < (buf + *len)) {
         alen = ntohs(attr->len);
-        if ((STUN_AHLEN + PAD4(alen) + (char *) attr) > (buf + *len))
+        if ((STUN_AHLEN + PAD4(alen) + (char *) attr) > (buf + *len)) {
+            err = 1;
             break;
+        }
         switch (ntohs(attr->type)) {
             case ATTR_FINGERPRINT:
-                set_fingerprint_from_attr(stun, buf, attr);
+                err = set_fingerprint_from_attr(stun, buf, attr);
                 break;
 
             case ATTR_MESSAGE_INTEGRITY:
-                set_message_integrity_from_attr(stun, buf, attr);
+                err = set_message_integrity_from_attr(stun, buf, attr);
                 break;
 
             case ATTR_USERNAME:
-                allocate_string_from_attr(&stun->username, attr);
+                err = allocate_string_from_attr(&stun->username, attr);
                 break;
 
             case ATTR_SERVER:
-                allocate_string_from_attr(&stun->server, attr);
+                err = allocate_string_from_attr(&stun->server, attr);
                 break;
 
             case ATTR_DATA:
-                allocate_buf_from_attr(&stun->data, &stun->data_len, attr);
+                err = allocate_buf_from_attr(&stun->data, &stun->data_len, attr);
                 break;
 
             case ATTR_REALM:
-                allocate_string_from_attr(&stun->realm, attr);
+                err = allocate_string_from_attr(&stun->realm, attr);
                 break;
 
             case ATTR_MAPPED_ADDRESS:
-                allocate_sockaddr_from_attr(&stun->mapped_address, &stun->mapped_address_len, attr);
+                err = allocate_sockaddr_from_attr(&stun->mapped_address, &stun->mapped_address_len, attr);
                 break;
 
             case ATTR_XOR_MAPPED_ADDRESS:
-                allocate_sockaddr_from_xor_attr(&stun->xor_mapped_address, &stun->xor_mapped_address_len, attr, (uint8_t *) buf);
+                err = allocate_sockaddr_from_xor_attr(&stun->xor_mapped_address, &stun->xor_mapped_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_PEER_ADDRESS:
-                allocate_sockaddr_from_xor_attr(&stun->peer_address, &stun->peer_address_len, attr, (uint8_t *) buf);
+                err = allocate_sockaddr_from_xor_attr(&stun->peer_address, &stun->peer_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_RELAY_ADDRESS:
-                allocate_sockaddr_from_xor_attr(&stun->relay_address, &stun->relay_address_len, attr, (uint8_t *) buf);
+                err = allocate_sockaddr_from_xor_attr(&stun->relay_address, &stun->relay_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_ERROR_CODE:
-                allocate_error_from_attr(stun, attr);
+                err = allocate_error_from_attr(stun, attr);
                 break;
 
             case ATTR_REQUESTED_TRANSPORT:
-                copy_uint32_from_attr((uint32_t *)&stun->requested_transport, attr);
+                err = copy_uint32_from_attr((uint32_t *)&stun->requested_transport, attr);
                 break;
 
             case ATTR_BANDWIDTH:
-                copy_uint32_from_attr((uint32_t *)&stun->bandwidth, attr);
+                err = copy_uint32_from_attr((uint32_t *)&stun->bandwidth, attr);
                 break;
 
             case ATTR_CONNECT_STATUS:
-                copy_uint32_from_attr((uint32_t *)&stun->connect_status, attr);
+                err = copy_uint32_from_attr((uint32_t *)&stun->connect_status, attr);
                 break;
 
             case ATTR_CHANNEL_NUMBER:
-                copy_uint16_from_attr((uint32_t *)&stun->channel, attr);
+                err = copy_uint16_from_attr((uint32_t *)&stun->channel, attr);
                 break;
 
             case ATTR_LIFETIME:
-                copy_uint32_from_attr((uint32_t *)&stun->lifetime, attr);
+                err = copy_uint32_from_attr((uint32_t *)&stun->lifetime, attr);
                 break;
 
             default:
@@ -1031,6 +1044,10 @@ stun_from_bytes(char *buf, size_t *len)
                 break;
         }
         attr = (attribute_t *) (STUN_AHLEN + PAD4(alen) + (char *) attr);
+    }
+    if (err) {
+        stun_free(stun);
+        return NULL;
     }
 
     return stun;
