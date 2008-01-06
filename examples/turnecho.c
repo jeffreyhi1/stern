@@ -11,7 +11,7 @@ int main(int argc, char **argv)
 {
     struct sockaddr srv, self, peer;
     struct sockaddr_in *sin;
-    char buf[8192], sbuf[16];
+    char buf[8192];
     unsigned int len;
     int ret;
     turn_socket_t sock;

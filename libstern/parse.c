@@ -355,7 +355,7 @@ allocate_string_from_attr(char **str, attribute_t * attr)
 
 //------------------------------------------------------------------------------
 static int
-allocate_buf_from_attr(char **buf, size_t *len, attribute_t * attr)
+allocate_buf_from_attr(void **buf, size_t *len, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
 
@@ -402,7 +402,7 @@ allocate_error_from_attr(struct stun_message *stun, attribute_t * attr)
         return -1;
     stun->error_code = attr->v.error.class * 100 + attr->v.error.number;
     if (alen == 4)
-        return;
+        return 0;
     buf = s_malloc(alen - 4 + 1);
     memcpy(buf, attr->v.error.reason, alen - 4);
     buf[alen] = '\0';
