@@ -74,7 +74,7 @@ struct client {
     struct event       *ev_cliread;      /* Client sent data                            */
     struct event       *ev_cliwrite;     /* Can write to client (TCP only)              */
     struct event       *ev_peerread;     /* Peer sent data (UDP), Can accept peer (TCP) */
-    struct event       *ev_peerwrite;    /* Can write to peer (TCP only)                */
+    struct channel     *out_channel;     /* Channel to write to (TCP only)              */
     struct permission **perms;           /* Permissions                                 */
     struct server      *server;          /* Server that accepted client socket          */
     struct sockaddr     addr;            /* Client reflexive address                    */
@@ -378,7 +378,7 @@ turnind_send_queue_data(struct client *client, struct channel *channel,
     request->data_len = 0;
 
     client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
-    client->ev_peerwrite = channel->ev_peerwrite;
+    client->out_channel = channel;
 }
 
 //------------------------------------------------------------------------------
@@ -475,7 +475,7 @@ client_set_events(struct client *client)
             event_add(client->ev_cliread, NULL);
             if (client->ev_peerread)
                 event_add(client->ev_peerread, NULL);
-            for(i = 0; i < client->nchannels; i++)
+            for (i = 0; i < client->nchannels; i++)
                 if (client->channels[i]->ev_peerread)
                     event_add(client->channels[i]->ev_peerread, NULL);
             break;
@@ -488,7 +488,7 @@ client_set_events(struct client *client)
 
         case MUX_SPLICING_FROM_CLIENT_WRITING:
             client_clear_read_events(client);
-            event_add(client->ev_peerwrite, NULL);
+            event_add(client->out_channel->ev_peerwrite, NULL);
             break;
 
         case MUX_SPLICING_TO_CLIENT_READING:
@@ -692,7 +692,7 @@ client_frame_forward(struct client *client)
     /* Queue delivery to peer */
     for (i = 0; i < client->nchannels; i++)
         if (client->channels[i]->num_clnt == ntohs(client->tag.channel)) {
-            client->ev_peerwrite = client->channels[i]->ev_peerwrite;
+            client->out_channel = client->channels[i];
             client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
             client->pos = 0;
             return;
@@ -836,7 +836,7 @@ client_write_at_data(struct client *client)
     ret = send(client->clnt,
                client->buf + client->pos,
                client->len - client->pos,
-               MSG_DONTWAIT);
+               MSG_DONTWAIT | MSG_NOSIGNAL);
     if (is_fatal(ret, errno)) {
         on_client_error(client);
         return -1;
