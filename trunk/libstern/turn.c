@@ -669,7 +669,6 @@ turn_sendto(turn_socket_t socket, char *buf, size_t len,
 {
     struct turn_socket *turn = FROM_TS(socket);
     struct channel *channel;
-    int ret;
 
     /* Check no operation is pending */
     if (turn->op != TS_NONE && turn->op != TS_RECV)

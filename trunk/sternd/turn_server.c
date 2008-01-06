@@ -406,7 +406,6 @@ turnind_send(struct stun_message *request, struct client *client)
 static void
 turnind_connstat(struct stun_message *request, struct client *client)
 {
-    struct permission *perm;
     struct channel *channel;
 
     if (!request->peer_address)

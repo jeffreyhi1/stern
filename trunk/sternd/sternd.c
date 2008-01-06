@@ -19,14 +19,9 @@
 int main(int argc, char **argv)
 {
     event_init();
-
     stun_tcp_init();
-
     stun_udp_init();
-
     turn_tcp_init();
-
     event_dispatch();
-
     return 0;
 }

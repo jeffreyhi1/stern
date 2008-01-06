@@ -122,7 +122,6 @@ static struct stun_message *
 make_binding_response(struct stun_message *req, struct sockaddr *addr)
 {
     struct stun_message *resp;
-    char buf[64];
 
     /* Init response */
     resp = stun_init_response(req->message_type | STUN_SUCCESS, req);

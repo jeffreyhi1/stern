@@ -24,6 +24,8 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <time.h>
+#include <stdlib.h>
 
 #include <stern/stun.h>
 #include <stern/turn.h>
@@ -38,5 +40,6 @@
 
 void *stun_tcp_init();
 void *stun_udp_init();
+void *turn_tcp_init();
 
 #endif
