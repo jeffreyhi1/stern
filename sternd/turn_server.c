@@ -60,27 +60,27 @@ struct channel {
 };
 
 struct client {
-    enum state         state;           /* Current forwarding state                    */
-    int                bandwidth;       /* Bandwidth for allocation                    */
-    int                clnt;            /* Client socket                               */
-    int                nchannels;       /* Number of channels/permissions              */
-    int                nperms;          /* Number of channels/permissions              */
-    int                need_maintain;   /* Need to perform periodic maintainance       */
-    int                peer;            /* Peer socket for UDP, Listen socket for TCP  */
-    int                protocol;        /* IP protocol to client UDP or TCP            */
-    size_t             len;             /* Number of bytes to write/read               */
-    size_t             pos;             /* Number of bytes written/read so far         */
-    struct channel    *channels;        /* Channels                                    */
-    struct event      *ev_cliread;      /* Client sent data                            */
-    struct event      *ev_cliwrite;     /* Can write to client (TCP only)              */
-    struct event      *ev_peerread;     /* Peer sent data (UDP), Can accept peer (TCP) */
-    struct event      *ev_peerwrite;    /* Can write to peer (TCP only)                */
-    struct permission *perms;           /* Permissions                                 */
-    struct server     *server;          /* Server that accepted client socket          */
-    struct sockaddr    addr;            /* Client reflexive address                    */
-    struct tag         tag;             /* Tag for current read/write to client        */
-    time_t             expires;         /* Time this allocation expires                */
-    void              *buf;             /* Buffer with data for current read/write     */
+    enum state          state;           /* Current forwarding state                    */
+    int                 bandwidth;       /* Bandwidth for allocation                    */
+    int                 clnt;            /* Client socket                               */
+    int                 nchannels;       /* Number of channels/permissions              */
+    int                 nperms;          /* Number of channels/permissions              */
+    int                 need_maintain;   /* Need to perform periodic maintainance       */
+    int                 peer;            /* Peer socket for UDP, Listen socket for TCP  */
+    int                 protocol;        /* IP protocol to client UDP or TCP            */
+    size_t              len;             /* Number of bytes to write/read               */
+    size_t              pos;             /* Number of bytes written/read so far         */
+    struct channel    **channels;        /* Channels                                    */
+    struct event       *ev_cliread;      /* Client sent data                            */
+    struct event       *ev_cliwrite;     /* Can write to client (TCP only)              */
+    struct event       *ev_peerread;     /* Peer sent data (UDP), Can accept peer (TCP) */
+    struct event       *ev_peerwrite;    /* Can write to peer (TCP only)                */
+    struct permission **perms;           /* Permissions                                 */
+    struct server      *server;          /* Server that accepted client socket          */
+    struct sockaddr     addr;            /* Client reflexive address                    */
+    struct tag          tag;             /* Tag for current read/write to client        */
+    time_t              expires;         /* Time this allocation expires                */
+    void               *buf;             /* Buffer with data for current read/write     */
 };
 
 static void on_peer_accept(int fd, short ev, void *arg);
@@ -235,7 +235,7 @@ channel_find_unused(struct client *client)
         if (--tries == 0)
             return -1;
         for (i = 0; i < client->nchannels; i++)
-            if (client->channels[i].num_self == chan)
+            if (client->channels[i]->num_self == chan)
                 break;
     } while (i < client->nchannels);
 
@@ -248,10 +248,11 @@ perm_new(struct client *client, struct sockaddr *addr)
 {
     struct permission *perm = NULL;
 
-    client->perms = (struct permission *) s_realloc(
+    client->perms = (struct permission **) s_realloc(
             client->perms,
-            (++client->nperms) * sizeof(struct permission));
-    perm = &client->perms[client->nperms - 1];
+            (++client->nperms) * sizeof(struct permission *));
+    perm = (struct permission *) s_malloc(sizeof(struct permission));
+    client->perms[client->nperms - 1] = perm;
 
     memcpy(&perm->addr, addr,
            addr->sa_family == AF_INET ? sizeof(struct sockaddr_in)
@@ -270,10 +271,11 @@ channel_new(struct client *client, struct permission *perm)
     chan = channel_find_unused(client);
     if (chan == -1) return NULL;
 
-    client->channels = (struct channel *) s_realloc(
+    client->channels = (struct channel **) s_realloc(
             client->channels,
-            (++client->nchannels) * sizeof(struct channel));
-    channel = &client->channels[client->nchannels - 1];
+            (++client->nchannels) * sizeof(struct channel *));
+    channel = (struct channel *) s_malloc(sizeof(struct channel));
+    client->channels[client->nchannels - 1] = channel;
 
     memset(channel, 0, sizeof(struct channel));
     channel->num_self = chan;
@@ -332,7 +334,7 @@ channel_get(struct client *client, struct permission *perm, struct sockaddr *add
 
     if (client->protocol == IPPROTO_TCP) {
         for (i = 0; i < client->nchannels; i++) {
-            channel = &client->channels[i];
+            channel = client->channels[i];
             slen = sizeof(saddr);
             getpeername(channel->peer, &saddr, &slen);
             if (sockaddr_matches(addr, &saddr))
@@ -340,7 +342,7 @@ channel_get(struct client *client, struct permission *perm, struct sockaddr *add
         }
     }
     for (i = 0; i < client->nchannels; i++) {
-        channel = &client->channels[i];
+        channel = client->channels[i];
         if (channel->perm == perm)
             return channel;
     }
@@ -355,7 +357,7 @@ perm_get(struct client *client, struct sockaddr *addr)
     int i;
 
     for (i = 0; i < client->nperms; i++) {
-        perm = &client->perms[i];
+        perm = client->perms[i];
         if (sockaddr_matches_addr(addr, &perm->addr))
             return perm;
     }
@@ -458,8 +460,8 @@ client_clear_read_events(struct client *client)
     if (client->ev_peerread)
         event_del(client->ev_peerread);
     for(i = 0; i < client->nchannels; i++)
-        if (client->channels[i].ev_peerread)
-            event_del(client->channels[i].ev_peerread);
+        if (client->channels[i]->ev_peerread)
+            event_del(client->channels[i]->ev_peerread);
 }
 
 //------------------------------------------------------------------------------
@@ -474,8 +476,8 @@ client_set_events(struct client *client)
             if (client->ev_peerread)
                 event_add(client->ev_peerread, NULL);
             for(i = 0; i < client->nchannels; i++)
-                if (client->channels[i].ev_peerread)
-                    event_add(client->channels[i].ev_peerread, NULL);
+                if (client->channels[i]->ev_peerread)
+                    event_add(client->channels[i]->ev_peerread, NULL);
             break;
 
         case MUX_SPLICING_FROM_CLIENT_READING_TAG:
@@ -519,14 +521,20 @@ on_client_error(struct client *client)
         event_del(client->ev_peerread);
 
     for(i = 0; i < client->nchannels; i++) {
-        if (client->channels[i].ev_peerread) {
-            event_del(client->channels[i].ev_peerread);
-            event_del(client->channels[i].ev_peerwrite);
-            close(client->channels[i].peer);
-            s_free(client->channels[i].ev_peerread);
-            s_free(client->channels[i].ev_peerwrite);
+        if (client->channels[i]->ev_peerread) {
+            event_del(client->channels[i]->ev_peerread);
+            s_free(client->channels[i]->ev_peerread);
         }
+        if (client->channels[i]->ev_peerwrite) {
+            event_del(client->channels[i]->ev_peerwrite);
+            s_free(client->channels[i]->ev_peerwrite);
+        }
+        if (client->channels[i]->peer != -1)
+            close(client->channels[i]->peer);
+        s_free(client->channels[i]);
     }
+    for(i = 0; i < client->nperms; i++)
+        s_free(client->perms[i]);
 
     close(client->clnt);
     if (client->peer != -1)
@@ -535,6 +543,7 @@ on_client_error(struct client *client)
     if (client->buf)
         s_free(client->buf);
     s_free(client->channels);
+    s_free(client->perms);
     s_free(client->ev_peerread);
     s_free(client->ev_cliwrite);
     s_free(client->ev_cliread);
@@ -603,7 +612,8 @@ on_peer_error(struct channel *channel)
         channel->ev_peerwrite = NULL;
     }
 
-    close(channel->peer);
+    if (channel->peer != -1)
+        close(channel->peer);
     channel->peer = -1;
     channel->num_clnt = 0;
 }
@@ -681,8 +691,8 @@ client_frame_forward(struct client *client)
 
     /* Queue delivery to peer */
     for (i = 0; i < client->nchannels; i++)
-        if (client->channels[i].num_clnt == ntohs(client->tag.channel)) {
-            client->ev_peerwrite = client->channels[i].ev_peerwrite;
+        if (client->channels[i]->num_clnt == ntohs(client->tag.channel)) {
+            client->ev_peerwrite = client->channels[i]->ev_peerwrite;
             client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
             client->pos = 0;
             return;
@@ -856,7 +866,7 @@ client_do_maintainance(struct client *client)
 
     /* Confirm the first client channel that hasn't been confirmed */
     for (i = 0; i < client->nchannels; i++) {
-        channel = &client->channels[i];
+        channel = client->channels[i];
         if (channel->num_clnt && !channel->self_confirm) {
             channel->self_confirm = 1;
             if (client->protocol == IPPROTO_UDP) {
@@ -937,9 +947,13 @@ on_peer_accept(int fd, short ev, void *arg)
     assert(client->state == MUX_WAITING_FOR_DATA);
 
     len = sizeof(addr);
-    peer = accept(fd, &addr, &len);
+    if ((peer = accept(fd, &addr, &len)) == -1) {
+        client_set_events(client);
+        return;
+    }
+
     for (i = 0; i < client->nperms; i++) {
-        perm = &client->perms[i];
+        perm = client->perms[i];
         if (sockaddr_matches_addr(&addr, &perm->addr)) {
             channel = channel_new(client, perm);
             if (!channel) break;
@@ -1025,8 +1039,8 @@ on_srv_accept(int fd, short ev, void *arg)
 
     client = client_new();
     if (!client) {
-        cli = accept(fd, NULL, 0);
-        close(cli);
+        if ((cli = accept(fd, NULL, 0)) != -1)
+            close(cli);
         return;
     }
     len = sizeof(client->addr);

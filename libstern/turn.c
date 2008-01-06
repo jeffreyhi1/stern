@@ -576,6 +576,7 @@ turn_recvfrom_stun(struct turn_socket *turn, char *buf, size_t len,
     struct stun_message *stun;
     size_t slen;
     char *sbuf;
+    ssize_t ret;
 
     slen = turn->last_len;
     sbuf = turn->buf ? turn->buf : buf;
@@ -584,9 +585,13 @@ turn_recvfrom_stun(struct turn_socket *turn, char *buf, size_t len,
     if (!stun)
         RETURN_ERROR(EAGAIN, -1);
 
-    if (stun->message_type == TURN_CONN_STAT_INDICATION)
-        return turn_recvfrom_connstat(turn, stun, addr, alen);
+    if (stun->message_type == TURN_CONN_STAT_INDICATION) {
+        ret = turn_recvfrom_connstat(turn, stun, addr, alen);
+        stun_free(stun);
+        return ret;
+    }
 
+    stun_free(stun);
     RETURN_ERROR(EAGAIN, -1);
 }
 
@@ -723,3 +728,18 @@ turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen)
     }
 }
 
+//------------------------------------------------------------------------------
+void
+turn_close(turn_socket_t socket)
+{
+    struct turn_socket *turn = FROM_TS(socket);
+
+    if (turn->sock != -1)
+        close(turn->sock);
+    if (turn->request)
+        stun_free(turn->request);
+    if (turn->buf)
+        s_free(turn->buf);
+    s_free(turn->channels);
+    s_free(turn);
+}
