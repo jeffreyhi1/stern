@@ -58,5 +58,7 @@ int main(int argc, char **argv)
         }
     }
 
+    turn_close(sock);
+
     return 0;
 }
