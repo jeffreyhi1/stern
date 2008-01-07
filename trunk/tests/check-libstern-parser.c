@@ -137,6 +137,8 @@ START_TEST(msghdr_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -212,6 +214,8 @@ START_TEST(attr_mapped_address_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -247,6 +251,8 @@ START_TEST(attr_xor_mapped_address_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -282,6 +288,8 @@ START_TEST(attr_relay_address_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -317,6 +325,8 @@ START_TEST(attr_peer_address_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -355,6 +365,8 @@ START_TEST(attr_username_ok)
     mask_buf(buf, mask, len);
     mask_buf(buf2, mask, len);
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -393,6 +405,8 @@ START_TEST(attr_server_ok)
     mask_buf(buf, mask, len);
     mask_buf(buf2, mask, len);
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -431,6 +445,8 @@ START_TEST(attr_realm_ok)
     mask_buf(buf, mask, len);
     mask_buf(buf2, mask, len);
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -469,6 +485,8 @@ START_TEST(attr_data_ok)
     mask_buf(buf, mask, len);
     mask_buf(buf2, mask, len);
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -494,6 +512,8 @@ START_TEST(attr_requested_transport_ok)
     fail_if(stun->requested_transport != 0x0102, "Requested transport incorrect");
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -520,6 +540,8 @@ START_TEST(attr_bandwidth_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -546,6 +568,8 @@ START_TEST(attr_connect_status_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -572,6 +596,8 @@ START_TEST(attr_channel_number_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -598,6 +624,8 @@ START_TEST(attr_lifetime_ok)
 
     fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
     fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
 }
 END_TEST
 
@@ -610,14 +638,14 @@ check_parser()
 
     parser = suite_create("libstern STUN parser");
 
-    test = tcase_create("Message_Header");
+    test = tcase_create("header");
     tcase_add_test(test, msghdr_short);
     tcase_add_test(test, msghdr_badlen);
     tcase_add_test(test, msghdr_badmagic);
     tcase_add_test(test, msghdr_ok);
     suite_add_tcase(parser, test);
 
-    test = tcase_create("Attributes");
+    test = tcase_create("attributes");
     tcase_add_test(test, attr_toobig);
     tcase_add_test(test, attr_mapped_address_badlen);
     tcase_add_test(test, attr_mapped_address_ok);
