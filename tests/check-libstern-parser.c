@@ -887,6 +887,7 @@ check_parser()
 
     test = tcase_create("header");
     tcase_add_test(test, msghdr_short);
+    tcase_add_test(test, msghdr_badtype);
     tcase_add_test(test, msghdr_badlen);
     tcase_add_test(test, msghdr_badmagic);
     tcase_add_test(test, msghdr_ok);
