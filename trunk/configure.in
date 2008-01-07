@@ -42,7 +42,15 @@ AC_FUNC_MEMCMP
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([inet_ntoa memmove memset socket strdup])
 
-CFLAGS="-O0 -g -Wall"
+# Debugging and test coverage
+AC_ARG_ENABLE([debugging],
+              [AC_HELP_STRING([--enable-debugging],
+                              [Enable debugging support (default=yes)])],
+              [],
+              [enable_debugging="yes"])
+if test "x${enable_debugging}" != "xno"; then
+    CFLAGS="-O0 -g -Wall"
+fi
 
 AC_CONFIG_FILES([Makefile include/Makefile src/Makefile libstern/Makefile sternd/Makefile examples/Makefile tests/Makefile])
 AC_OUTPUT
