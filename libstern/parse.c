@@ -489,7 +489,7 @@ copy_buf_to_attr(attribute_t * attr, size_t len, char *buf, size_t blen)
         return -1;
     attr->len = htons(blen);
     memcpy(attr->v.bytes, buf, blen);
-    memset(blen + (void *) attr, 0, PAD4(blen) - blen);
+    memset(STUN_AHLEN + blen + (void *) attr, 0, PAD4(blen) - blen);
     return PAD4(blen) + STUN_AHLEN;
 }
 
@@ -915,7 +915,7 @@ stun_to_bytes(char *buf, size_t len, struct stun_message *stun)
         pos = channel_to_bytes(buf, pos, len, stun);
 
     /* Connect Status */
-    if (stun->connect_status != 0)
+    if (stun->connect_status != -1)
         pos = connect_status_to_bytes(buf, pos, len, stun);
 
     /* Bandwidth */
