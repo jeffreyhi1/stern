@@ -436,8 +436,25 @@ allocate_error_from_attr(struct stun_message *stun, attribute_t * attr)
         return 0;
     buf = s_malloc(alen - 4 + 1);
     memcpy(buf, attr->v.error.reason, alen - 4);
-    buf[alen] = '\0';
+    buf[alen - 4] = '\0';
     stun->error_reason = buf;
+    return 0;
+}
+
+//------------------------------------------------------------------------------
+static int
+allocate_unkown_attrs_from_attr(struct stun_message *stun, attribute_t * attr)
+{
+    size_t alen = ntohs(attr->len);
+    int i, num = alen / 2;
+    char *buf;
+
+    if (alen < 2)
+        return -1;
+    stun->unknown_attributes = s_malloc((num + 1) * sizeof(int));
+    for (i = 0; i < num; i++)
+        stun->unknown_attributes[i] = ntohs(attr->v.attrs.attr[i]);
+    stun->unknown_attributes[i] = 0;
     return 0;
 }
 
@@ -680,8 +697,10 @@ unknown_attributes_to_bytes(char *buf, size_t pos, size_t len,
             return pos;
         attr->v.attrs.attr[i] = htons(stun->unknown_attributes[i] & 0xFFFF);
     }
+    if (i % 2 == 1)
+        attr->v.attrs.attr[i] = 0;
     attr->type = htons(ATTR_UNKNOWN_ATTRIBUTES);
-    attr->len = htons(PAD4(2 * i));
+    attr->len = htons(2 * i);
     return pos + STUN_AHLEN + PAD4(2 * i);
 }
 
@@ -1083,6 +1102,10 @@ stun_from_bytes(char *buf, size_t *len)
 
             case ATTR_ERROR_CODE:
                 err = allocate_error_from_attr(stun, attr);
+                break;
+
+            case ATTR_UNKNOWN_ATTRIBUTES:
+                err = allocate_unkown_attrs_from_attr(stun, attr);
                 break;
 
             case ATTR_REQUESTED_TRANSPORT:
