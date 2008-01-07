@@ -19,16 +19,6 @@
 #define CACHE_TIMEOUT       120
 #define CACHE_FULL          64
 
-#define DEFAULT_USERNAME    "username"
-#define DEFAULT_REALM       "realm"
-#define DEFAULT_PASSWORD    (\
-    "\x7c\xac\xc1\x13"       \
-    "\xe6\x1f\xca\x28"       \
-    "\x91\x72\x07\x4f"       \
-    "\x40\x03\x90\x95"       \
-)                               /* MD5("alice:realm:password") */
-#define DEFAULT_PASSWORD_LEN 16
-
 #pragma pack(push)
 typedef struct {
     uint16_t type;
@@ -103,7 +93,9 @@ reap_auth_keys()
 
     now = time(NULL);
     for (i = 0; i < num_passwords; i++) {
-        if (passwords[i].expire < now || i == live_passwords)
+        if (passwords[i].expire == 0 ||
+            passwords[i].expire < now ||
+            i == live_passwords)
             continue;
         passwords[live_passwords++] = passwords[i];
     }
@@ -147,7 +139,7 @@ add_auth_key_by_username(char *key, int len, char *username)
     pass->xact_id = NULL;
     pass->username = strdup(username);
     pass->len = len;
-    pass->expire = time(NULL) + CACHE_TIMEOUT;
+    pass->expire = 0;
 
     if (num_passwords > CACHE_FULL)
         reap_auth_keys();
@@ -160,6 +152,7 @@ matches_xid(uint8_t *xida, uint8_t *xidb)
     return memcmp(xida, xidb, STUN_XIDLEN) == 0;
 }
 
+#if 0
 //------------------------------------------------------------------------------
 static int
 get_auth_key_default(char **key, int *len, struct stun_message *stun)
@@ -171,6 +164,28 @@ get_auth_key_default(char **key, int *len, struct stun_message *stun)
             *len = DEFAULT_PASSWORD_LEN;
             return 0;
         }
+    return -1;
+}
+#endif
+
+//------------------------------------------------------------------------------
+static int
+get_auth_key_from_installed(char **key, int *len, struct stun_message *stun)
+{
+    int i;
+
+    if (!stun->username)
+        return -1;
+
+    for (i = 0; i < num_passwords; i++) {
+        if (passwords[i].username &&
+            strcmp(stun->username, passwords[i].username) == 0) {
+            *len = passwords[i].len;
+            *key = passwords[i].password;
+            return 0;
+        }
+    }
+
     return -1;
 }
 
@@ -210,6 +225,10 @@ get_auth_key_from_message(char **key, int *len, struct stun_message *stun)
 static int
 get_auth_key(char **key, int *len, struct stun_message *stun)
 {
+    /* Check user installed keys */
+    if (get_auth_key_from_installed(key, len, stun) == 0)
+        return 0;
+
     /* Use password used to validate request, if any */
     if (get_auth_key_from_message(key, len, stun) == 0)
         return 0;
@@ -218,9 +237,11 @@ get_auth_key(char **key, int *len, struct stun_message *stun)
     if (get_auth_key_from_cache(key, len, stun) == 0)
         return 0;
 
+#if 0
     /* Try default password for testing purposes */
     if (get_auth_key_default(key, len, stun) == 0)
         return 0;
+#endif
 
     return -1;
 }
@@ -272,15 +293,25 @@ set_message_integrity_from_attr(struct stun_message *stun, char *buf,
     uint8_t hmac[20];
     unsigned int hmac_len = sizeof(hmac);
     char *key;
-    int len;
+    int len, blen;
+    uint16_t msglen;
+    message_t *msg;
 
     if (ntohs(attr->len) != hmac_len)
         return -1;
+
     stun->message_integrity = STUN_ATTR_PRESENT;
     if (get_auth_key(&key, &len, stun) == -1)
         return 0;
-    HMAC(EVP_sha1(), key, len, (uint8_t *) buf, ((char *) attr) - buf,
-         hmac, &hmac_len);
+
+    /* RFC3489bis 14.4: Message length should include only upto message integrity */
+    msg = (message_t *) buf;
+    msglen = msg->len;
+    blen = ((char *) attr) - buf;
+    msg->len = htons(blen - STUN_HLEN + STUN_AHLEN + hmac_len);
+    HMAC(EVP_sha1(), key, len, (uint8_t *) buf, blen, hmac, &hmac_len);
+    msg->len = msglen;
+
     if (memcmp(attr->v.bytes, hmac, hmac_len) != 0) {
         stun->message_integrity = STUN_ATTR_PRESENT_BUT_INVALID;
     } else {
@@ -432,7 +463,7 @@ allocate_sockaddr_from_attr(struct sockaddr **addr, size_t *addrlen, attribute_t
         if (ntohs(attr->len) != 20)
             return -1;
         sin6 = s_malloc(sizeof(struct sockaddr_in6));
-        sin6->sin6_family = AF_INET;
+        sin6->sin6_family = AF_INET6;
         for (i = 0; i < 16; i++)
             sin6->sin6_addr.s6_addr[i] = attr->v.addr.ip.addr6[i];
         sin6->sin6_port = attr->v.addr.port;
@@ -599,12 +630,21 @@ fix_message_integrity_bytes(char *buf, attribute_t * message_integrity,
     unsigned int hmac_len = sizeof(hmac);
     char *key;
     int len;
-    int i;
+    int i, blen;
+    uint16_t msglen;
+    message_t *msg;
 
     if (get_auth_key(&key, &len, stun) == -1)
         return;
-    HMAC(EVP_sha1(), key, len, (uint8_t *) buf,
-         ((char *) message_integrity) - buf, hmac, &hmac_len);
+
+    /* RFC3489bis 14.4: Message length should include only upto message integrity */
+    msg = (message_t *) buf;
+    msglen = msg->len;
+    blen = ((char *) message_integrity) - buf;
+    msg->len = htons(blen - STUN_HLEN + STUN_AHLEN + hmac_len);
+    HMAC(EVP_sha1(), key, len, (uint8_t *) buf, blen, hmac, &hmac_len);
+    msg->len = msglen;
+
     for (i = 0; i < sizeof(hmac); i++)
         message_integrity->v.bytes[i] = hmac[i];
     if (IS_REQUEST(stun->message_type))
@@ -643,6 +683,25 @@ unknown_attributes_to_bytes(char *buf, size_t pos, size_t len,
     attr->type = htons(ATTR_UNKNOWN_ATTRIBUTES);
     attr->len = htons(PAD4(2 * i));
     return pos + STUN_AHLEN + PAD4(2 * i);
+}
+
+//------------------------------------------------------------------------------
+static int
+other_to_bytes(char *buf, size_t pos, size_t len, struct stun_message *stun)
+{
+    int i;
+    attribute_t *attr;
+
+    for (i = 0; stun->other[i].type; i++) {
+        if (pos + STUN_AHLEN + PAD4(stun->other[i].len) > len)
+            return pos;
+        attr = (attribute_t *) (buf + pos);
+        attr->type = htons(stun->other[i].type);
+        attr->len = htons(stun->other[i].len);
+        memcpy(attr->v.bytes, stun->other[i].value, stun->other[i].len);
+        pos += STUN_AHLEN + PAD4(stun->other[i].len);
+    }
+    return pos;
 }
 
 //------------------------------------------------------------------------------
@@ -934,6 +993,10 @@ stun_to_bytes(char *buf, size_t len, struct stun_message *stun)
     if (stun->unknown_attributes)
         pos = unknown_attributes_to_bytes(buf, pos, len, stun);
 
+    /* Other */
+    if (stun->other)
+        pos = other_to_bytes(buf, pos, len, stun);
+
     /* Message integrity */
     if (stun->message_integrity != STUN_ATTR_NOT_PRESENT)
         pos = message_integrity_to_bytes(buf, pos, len, &messageintegrity);
@@ -963,6 +1026,7 @@ stun_from_bytes(char *buf, size_t *len)
     attribute_t *attr;
     size_t alen;
     int num_other = 0, err = 0;
+    int stop_attr = 0;
 
     stun = allocate_stun_from_bytes(buf, len);
     if (!stun) return NULL;
@@ -974,13 +1038,15 @@ stun_from_bytes(char *buf, size_t *len)
             err = 1;
             break;
         }
-        switch (ntohs(attr->type)) {
+        switch ((stop_attr << 16) | ntohs(attr->type)) {
+            case (1 << 16 | ATTR_FINGERPRINT):
             case ATTR_FINGERPRINT:
                 err = set_fingerprint_from_attr(stun, buf, attr);
                 break;
 
             case ATTR_MESSAGE_INTEGRITY:
                 err = set_message_integrity_from_attr(stun, buf, attr);
+                stop_attr = 1;
                 break;
 
             case ATTR_USERNAME:
@@ -1040,7 +1106,8 @@ stun_from_bytes(char *buf, size_t *len)
                 break;
 
             default:
-                num_other = allocate_other_from_attr(stun, num_other, attr);
+                if (!stop_attr)
+                    num_other = allocate_other_from_attr(stun, num_other, attr);
                 break;
         }
         attr = (attribute_t *) (STUN_AHLEN + PAD4(alen) + (char *) attr);
@@ -1055,7 +1122,14 @@ stun_from_bytes(char *buf, size_t *len)
 
 //------------------------------------------------------------------------------
 void
-stun_add_password(char *username, char *password, int len)
+stun_add_user_password(char *username, char *password, int len)
 {
     add_auth_key_by_username(password, len, username);
+}
+
+//------------------------------------------------------------------------------
+void
+stun_add_xact_password(char *xact_id, char *password, int len)
+{
+    add_auth_key_by_xid(password, len, (uint8_t *) xact_id);
 }
