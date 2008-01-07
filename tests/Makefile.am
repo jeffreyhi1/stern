@@ -13,3 +13,6 @@ check_libstern_coverage_SOURCES = check-libstern.c check-libstern-parser.c \
 								  ../src/util.c
 check_libstern_coverage_LDADD = @CHECK_LIBS@
 check_libstern_coverage_CFLAGS = @CHECK_CFLAGS@ -g -Wall -fprofile-arcs -ftest-coverage
+
+clean-local:
+	rm *.gcda *.gcno
