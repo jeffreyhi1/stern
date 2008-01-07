@@ -15,6 +15,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <netinet/in.h>
+#include <string.h>
+#include <stdio.h>
 #include <check.h>
 
 #include <stern/stun.h>
@@ -630,6 +632,251 @@ START_TEST(attr_lifetime_ok)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(vector_2_1)
+{
+    char buf[] = {
+        0x00, 0x01, 0x00, 0x44,  // Request type and message length
+        0x21, 0x12, 0xa4, 0x42,  // Message cookie
+        0xb7, 0xe7, 0xa7, 0x01,  //
+        0xbc, 0x34, 0xd6, 0x86,  // Transaction ID
+        0xfa, 0x87, 0xdf, 0xae,  //
+        0x00, 0x24, 0x00, 0x04,  //
+        0x6e, 0x00, 0x01, 0xff,  //
+        0x80, 0x29, 0x00, 0x08,  //
+        0x93, 0x2f, 0xf9, 0xb1,  //
+        0x51, 0x26, 0x3b, 0x36,  //
+        0x00, 0x06, 0x00, 0x09,  // USERNAME attribute header
+        0x65, 0x76, 0x74, 0x6a,  //
+        0x3a, 0x68, 0x36, 0x76,  // Username (9 bytes) and padding (3 bytes)
+        0x59, 0x20, 0x20, 0x20,  //
+        0x00, 0x08, 0x00, 0x14,  // MESSAGE-INTEGRITY attribute header
+        0x62, 0x4e, 0xeb, 0xdc,  //
+        0x3c, 0xc9, 0x2d, 0xd8,  //
+        0x4b, 0x74, 0xbf, 0x85,  // HMAC-SHA1 fingerprint
+        0xd1, 0xc0, 0xf5, 0xde,  //
+        0x36, 0x87, 0xbd, 0x33,  //
+        0x80, 0x28, 0x00, 0x04,  // FINGERPRINT attribute header
+        0xad, 0x8a, 0x85, 0xff,  // CRC32 fingerprint
+    };
+    size_t len = sizeof(buf);
+    char buf2[128];
+    struct stun_message *stun, *stun2;
+    char *username = "evtj:h6vY";
+    char *password = "VOkJxbRl1RmTxUk/WvJxBt";
+    char *xact_id = "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
+
+    stun_add_user_password(username, password, strlen(password));
+    stun = stun_from_bytes(buf, &len);
+    fail_if(stun == NULL, "Not parsed OK message");
+
+    /* Message type */
+    fail_unless(stun->message_type == 1, "Incorrect message type");
+
+    /* Xact ID */
+    fail_unless(memcmp(stun->xact_id, xact_id, 12) == 0, "Incorrect transaction ID");
+
+    /* Username */
+    fail_if(stun->username == NULL, "Missing username");
+    fail_unless(strlen(stun->username) == strlen(username), "Incorrect username length");
+    fail_unless(strcmp(stun->username, username) == 0, "Incorrect username");
+
+    /* Unknown attributes */
+    fail_if(stun->other == NULL, "Unknown attributes incorrectly parsed");
+    fail_unless(stun->other[2].type == 0, "Incorrect number of unknown attributes");
+
+    /* First unknown */
+    fail_unless(stun->other[0].type == 0x24, "Incorrect type");
+    fail_unless(stun->other[0].len == 4, "Incorrect length");
+    fail_unless(memcmp(stun->other[0].value, "\x6e\x00\x01\xff", 4) == 0, "Incorrect value");
+
+    /* Second unknown */
+    fail_unless(stun->other[1].type == 0x8029, "Incorrect type");
+    fail_unless(stun->other[1].len == 8, "Incorrect length");
+    fail_unless(memcmp(stun->other[1].value,
+                       "\x93\x2f\xf9\xb1\x51\x26\x3b\x36", 4) == 0, "Incorrect value");
+
+    /* Message integrity */
+    fail_unless(stun->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    /* Fingerprint */
+    fail_unless(stun->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+
+    /* re-serialize */
+    fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+
+    /* Cannot check directly against buf because of attribute ordering and padding
+     * differences. Since de-serialization worked uptil here, check after re-deserializing */
+    stun2 = stun_from_bytes(buf2, &len);
+    fail_unless(stun2->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+    fail_unless(stun2->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    stun_free(stun);
+    stun_free(stun2);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(vector_2_2)
+{
+    char buf[] = {
+        0x01, 0x01, 0x00, 0x3c,  // Response type and message length
+        0x21, 0x12, 0xa4, 0x42,  // Message cookie
+        0xb7, 0xe7, 0xa7, 0x01,  //
+        0xbc, 0x34, 0xd6, 0x86,  // Transaction ID
+        0xfa, 0x87, 0xdf, 0xae,  //
+        0x80, 0x22, 0x00, 0x0b,  //
+        0x74, 0x65, 0x73, 0x74,  //
+        0x20, 0x76, 0x65, 0x63,  //
+        0x74, 0x6f, 0x72, 0x20,  //
+        0x00, 0x20, 0x00, 0x08,  //
+        0x00, 0x01, 0xa1, 0x47,  //
+        0xe1, 0x12, 0xa6, 0x43,  //
+        0x00, 0x08, 0x00, 0x14,  // MESSAGE-INTEGRITY attribute header
+        0x2b, 0x91, 0xf5, 0x99,  //
+        0xfd, 0x9e, 0x90, 0xc3,  //
+        0x8c, 0x74, 0x89, 0xf9,  // HMAC-SHA1 fingerprint
+        0x2a, 0xf9, 0xba, 0x53,  //
+        0xf0, 0x6b, 0xe7, 0xd7,  //
+        0x80, 0x28, 0x00, 0x04,  // FINGERPRINT attribute header
+        0xc0, 0x7d, 0x4c, 0x96,  // CRC32 fingerprint
+    };
+    size_t len = sizeof(buf);
+    char buf2[128];
+    struct stun_message *stun, *stun2;
+    char *password = "VOkJxbRl1RmTxUk/WvJxBt";
+    char *server = "test vector";
+    int port = 32853;
+    int ip = 0xc0000201;
+    char *xact_id = "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
+    struct sockaddr_in *sin;
+
+    stun_add_xact_password(xact_id, password, strlen(password));
+    stun = stun_from_bytes(buf, &len);
+    fail_if(stun == NULL, "Not parsed OK message");
+
+    /* Message type */
+    fail_unless(stun->message_type == 0x101, "Incorrect message type");
+
+    /* Xact ID */
+    fail_unless(memcmp(stun->xact_id, xact_id, 12) == 0, "Incorrect transaction ID");
+
+    /* Server */
+    fail_if(stun->server == NULL, "Missing server");
+    fail_unless(strlen(stun->server) == strlen(server), "Incorrect server length");
+    fail_unless(strcmp(stun->server, server) == 0, "Incorrect server");
+
+    /* Xor mapped address */
+    fail_if(stun->xor_mapped_address == NULL, "Xor mapped address not parsed");
+    fail_if(stun->xor_mapped_address->sa_family != AF_INET, "Xor mapped address family incorrect");
+    fail_if(stun->xor_mapped_address_len != sizeof(struct sockaddr_in),
+            "Xor mapped address size incorrect");
+    sin = (struct sockaddr_in *) stun->xor_mapped_address;
+    fail_if(sin->sin_port != htons(port), "Xor mapped address port incorrect");
+    fail_if(sin->sin_addr.s_addr != htonl(ip), "Xor mapped address address incorrect");
+
+    /* Message integrity */
+    fail_unless(stun->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    /* Fingerprint */
+    fail_unless(stun->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+
+    /* re-serialize */
+    fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+
+    /* Cannot check directly against buf because of attribute ordering and padding
+     * differences. Since de-serialization worked uptil here, check after re-deserializing */
+    stun2 = stun_from_bytes(buf2, &len);
+    fail_unless(stun2->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+    fail_unless(stun2->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    stun_free(stun);
+    stun_free(stun2);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(vector_2_3)
+{
+    char buf[] = {
+        0x01, 0x01, 0x00, 0x48,  // Response type and message length
+        0x21, 0x12, 0xa4, 0x42,  // Message cookie
+        0xb7, 0xe7, 0xa7, 0x01,  //
+        0xbc, 0x34, 0xd6, 0x86,  // Transaction ID
+        0xfa, 0x87, 0xdf, 0xae,  //
+        0x80, 0x22, 0x00, 0x0b,  //
+        0x74, 0x65, 0x73, 0x74,  //
+        0x20, 0x76, 0x65, 0x63,  //
+        0x74, 0x6f, 0x72, 0x20,  //
+        0x00, 0x20, 0x00, 0x14,  //
+        0x00, 0x02, 0xa1, 0x47,  //
+        0x01, 0x13, 0xa9, 0xfa,  //
+        0xa5, 0xd3, 0xf1, 0x79,  //
+        0xbc, 0x25, 0xf4, 0xb5,  //
+        0xbe, 0xd2, 0xb9, 0xd9,  //
+        0x00, 0x08, 0x00, 0x14,  // MESSAGE-INTEGRITY attribute header
+        0xa3, 0x82, 0x95, 0x4e,  //
+        0x4b, 0xe6, 0x7b, 0xf1,  //
+        0x17, 0x84, 0xc9, 0x7c,  // HMAC-SHA1 fingerprint
+        0x82, 0x92, 0xc2, 0x75,  //
+        0xbf, 0xe3, 0xed, 0x41,  //
+        0x80, 0x28, 0x00, 0x04,  // FINGERPRINT attribute header
+        0xc8, 0xfb, 0x0b, 0x4c,  // CRC32 fingerprint
+    };
+    size_t len = sizeof(buf);
+    char buf2[128];
+    struct stun_message *stun, *stun2;
+    char *password = "VOkJxbRl1RmTxUk/WvJxBt";
+    char *server = "test vector";
+    int port = 32853;
+    char *ip = "\x20\x01\x0d\xb8\x12\x34\x56\x78\x00\x11\x22\x33\x44\x55\x66\x77";
+    char *xact_id = "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
+    struct sockaddr_in6 *sin6;
+
+    stun_add_xact_password(xact_id, password, strlen(password));
+    stun = stun_from_bytes(buf, &len);
+    fail_if(stun == NULL, "Not parsed OK message");
+
+    /* Message type */
+    fail_unless(stun->message_type == 0x101, "Incorrect message type");
+
+    /* Xact ID */
+    fail_unless(memcmp(stun->xact_id, xact_id, 12) == 0, "Incorrect transaction ID");
+
+    /* Server */
+    fail_if(stun->server == NULL, "Missing server");
+    fail_unless(strlen(stun->server) == strlen(server), "Incorrect server length");
+    fail_unless(strcmp(stun->server, server) == 0, "Incorrect server");
+
+    /* Xor mapped address */
+    fail_if(stun->xor_mapped_address == NULL, "Xor mapped address not parsed");
+    fail_if(stun->xor_mapped_address->sa_family != AF_INET6, "Xor mapped address family incorrect");
+    fail_if(stun->xor_mapped_address_len != sizeof(struct sockaddr_in6),
+            "Xor mapped address size incorrect");
+    sin6 = (struct sockaddr_in6 *) stun->xor_mapped_address;
+    fail_if(sin6->sin6_port != htons(port), "Xor mapped address port incorrect");
+    fail_if(memcmp(sin6->sin6_addr.s6_addr, ip, 16), "Xor mapped address address incorrect");
+
+    /* Message integrity */
+    fail_unless(stun->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    /* Fingerprint */
+    fail_unless(stun->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+
+    /* re-serialize */
+    fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+
+    /* Cannot check directly against buf because of attribute ordering and padding
+     * differences. Since de-serialization worked uptil here, check after re-deserializing */
+    stun2 = stun_from_bytes(buf2, &len);
+    fail_unless(stun2->fingerprint == STUN_ATTR_PRESENT_AND_VALIDATED, "Fingerprint mismatch");
+    fail_unless(stun2->message_integrity == STUN_ATTR_PRESENT_AND_VALIDATED, "Message integrity mismatch");
+
+    stun_free(stun);
+    stun_free(stun2);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 Suite *
 check_parser()
 {
@@ -661,6 +908,12 @@ check_parser()
     tcase_add_test(test, attr_connect_status_ok);
     tcase_add_test(test, attr_channel_number_ok);
     tcase_add_test(test, attr_lifetime_ok);
+    suite_add_tcase(parser, test);
+
+    test = tcase_create("draft-ietf-behave-stun-test-vectors");
+    tcase_add_test(test, vector_2_1);
+    tcase_add_test(test, vector_2_2);
+    tcase_add_test(test, vector_2_3);
     suite_add_tcase(parser, test);
 
     return parser;
