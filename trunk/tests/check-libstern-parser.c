@@ -632,6 +632,98 @@ START_TEST(attr_lifetime_ok)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(attr_error_ok)
+{
+    char buf[] = {
+        0x01, 0x11, 0x00, 0x14,     // type = 0x01, len = 0x14
+        0x21, 0x12, 0xa4, 0x42,     // magic = 0x2112a442
+        0x01, 0x00, 0x00, 0x00,     // xact_id = 0x010000000000000000000000
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x09, 0x00, 0x0f,     // error; len = 15
+        0x00, 0x00, 0x04, 0x14,     // code = 420
+        0x74, 0x65, 0x73, 0x74,
+        0x20, 0x72, 0x65, 0x61,
+        0x73, 0x6f, 0x6e, 0x20,
+    };
+    char mask[] = {
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0x00,
+    };
+    char buf2[64];
+    size_t len = 40;
+    struct stun_message *stun;
+    char *reason = "test reason";
+
+    stun = stun_from_bytes(buf, &len);
+    fail_if(stun == NULL, "Not parsed OK message");
+    fail_unless(stun->error_code == 420, "Incorrect error code");
+    fail_if(stun->error_reason == NULL, "Reason missing");
+    fail_unless(strlen(stun->error_reason) == strlen(reason), "Reason length incorrect");
+    fail_unless(strcmp(stun->error_reason, reason) == 0, "Reason incorrect");
+
+    fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+    mask_buf(buf, mask, len);
+    mask_buf(buf2, mask, len);
+    fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(attr_unknown_attributes_ok)
+{
+    char buf[] = {
+        0x01, 0x11, 0x00, 0x0c,     // type = 0x01, len = 0x0c
+        0x21, 0x12, 0xa4, 0x42,     // magic = 0x2112a442
+        0x01, 0x00, 0x00, 0x00,     // xact_id = 0x010000000000000000000000
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x0a, 0x00, 0x06,     // unknown_attributes; len = 6
+        0x01, 0x00, 0x00, 0x02,     // code = 420
+        0x00, 0x03, 0x40, 0x00,
+    };
+    char mask[] = {
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0x00, 0x00,
+    };
+    char buf2[64];
+    size_t len = 32;
+    struct stun_message *stun;
+
+    stun = stun_from_bytes(buf, &len);
+    fail_if(stun == NULL, "Not parsed OK message");
+    fail_if(stun->unknown_attributes == NULL, "Missing unknown attributes");
+    fail_unless(stun->unknown_attributes[0] == 0x0100, "Incorrect unknown attributes");
+    fail_unless(stun->unknown_attributes[1] == 0x0002, "Incorrect unknown attributes");
+    fail_unless(stun->unknown_attributes[2] == 0x0003, "Incorrect unknown attributes");
+    fail_unless(stun->unknown_attributes[3] == 0x0000, "Incorrect unknown attributes");
+
+    fail_if(stun_to_bytes(buf2, sizeof(buf2), stun) != len, "Incorrect message size");
+    mask_buf(buf, mask, len);
+    mask_buf(buf2, mask, len);
+    fail_if(memcmp(buf, buf2, len) != 0, "Incorrect message bytes");
+
+    stun_free(stun);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 START_TEST(vector_2_1)
 {
     char buf[] = {
@@ -909,6 +1001,8 @@ check_parser()
     tcase_add_test(test, attr_connect_status_ok);
     tcase_add_test(test, attr_channel_number_ok);
     tcase_add_test(test, attr_lifetime_ok);
+    tcase_add_test(test, attr_error_ok);
+    tcase_add_test(test, attr_unknown_attributes_ok);
     suite_add_tcase(parser, test);
 
     test = tcase_create("draft-ietf-behave-stun-test-vectors");
