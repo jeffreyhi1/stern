@@ -89,7 +89,10 @@ struct stun_message *
 stun_from_bytes(char *buf, size_t *len);
 
 void
-stun_add_password(char *username, char *password, int len);
+stun_add_user_password(char *username, char *password, int len);
+
+void
+stun_add_xact_password(char *xact_id, char *password, int len);
 
 int
 stun_to_bytes(char *buf, size_t len, struct stun_message *stun);
