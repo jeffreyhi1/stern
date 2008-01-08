@@ -21,13 +21,17 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
 
 #include <stern/stun.h>
+#include <stern/turn.h>
 #include "const.h"
 
 #include <check.h>
 
 Suite *check_parser();
 Suite *check_stun();
+Suite *check_turn();
 
 #endif

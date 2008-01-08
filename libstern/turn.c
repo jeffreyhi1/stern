@@ -173,7 +173,8 @@ is_sockerr(struct turn_socket *turn, int ret, int err, int op_success, int op_pr
     if (ret >= 0) {
         turn->op = op_success;
         return 0;
-    } else if (ret == -1 && err == EINPROGRESS) {
+    } else if (ret == -1 && (err == EINPROGRESS
+                             || err == EAGAIN)) {
         turn->op = op_progress;
         return -1;
     } else if (ret == -1) {
@@ -742,4 +743,17 @@ turn_close(turn_socket_t socket)
         s_free(turn->buf);
     s_free(turn->channels);
     s_free(turn);
+}
+
+//------------------------------------------------------------------------------
+int
+turn_set_nonblocking(turn_socket_t socket)
+{
+    struct turn_socket *turn = FROM_TS(socket);
+    int flags;
+
+    if ((flags = fcntl(turn->sock, F_GETFL, 0)) == -1
+        || fcntl(turn->sock, F_SETFL, flags | O_NONBLOCK) == -1)
+        return -1;
+    return 0;
 }

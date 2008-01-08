@@ -23,6 +23,9 @@ turn_socket_t
 turn_socket(int family, int type, int protocol);
 
 int
+turn_set_nonblocking(turn_socket_t socket);
+
+int
 turn_init(turn_socket_t socket, struct sockaddr *addr, socklen_t len);
 
 int
