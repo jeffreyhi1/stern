@@ -375,6 +375,7 @@ allocate_string_from_attr(char **str, attribute_t * attr)
     size_t alen = ntohs(attr->len);
     char *buf;
 
+    *str = NULL;
     if (alen == 0)
         return 0;
     buf = s_malloc(alen + 1);
@@ -390,6 +391,7 @@ allocate_buf_from_attr(void **buf, size_t *len, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
 
+    *buf = NULL;
     if (alen == 0)
         return 0;
     *buf = s_malloc(alen);
@@ -429,6 +431,7 @@ allocate_error_from_attr(struct stun_message *stun, attribute_t * attr)
     size_t alen = ntohs(attr->len);
     char *buf;
 
+    stun->error_reason = NULL;
     if (alen < 4)
         return -1;
     stun->error_code = attr->v.error.class * 100 + attr->v.error.number;
@@ -448,6 +451,7 @@ allocate_unkown_attrs_from_attr(struct stun_message *stun, attribute_t * attr)
     size_t alen = ntohs(attr->len);
     int i, num = alen / 2;
 
+    stun->unknown_attributes = NULL;
     if (alen < 2)
         return -1;
     stun->unknown_attributes = s_malloc((num + 1) * sizeof(int));
@@ -465,6 +469,8 @@ allocate_sockaddr_from_attr(struct sockaddr **addr, size_t *addrlen, attribute_t
     struct sockaddr_in6 *sin6;
     int i;
 
+    *addr = NULL;
+    *addrlen = 0;
     if (attr->v.addr.family == STUN_ADDR_IP4) {
         if (ntohs(attr->len) != 8)
             return -1;
@@ -1263,35 +1269,3 @@ stun_new(int type)
     return stun;
 }
 
-//------------------------------------------------------------------------------
-int
-stun_set_sockaddr(struct stun_message *stun, int attr, struct sockaddr *addr, socklen_t len)
-{
-    struct sockaddr **saddr;
-
-    switch (attr) {
-        case ATTR_MAPPED_ADDRESS: saddr = &stun->mapped_address; break;
-        case ATTR_XOR_MAPPED_ADDRESS: saddr = &stun->xor_mapped_address; break;
-        case ATTR_RELAY_ADDRESS: saddr = &stun->relay_address; break;
-        case ATTR_PEER_ADDRESS: saddr = &stun->peer_address; break;
-        default: return -1;
-    }
-
-    if (*saddr)
-        s_free(*saddr);
-    *saddr = s_malloc(len);
-    memcpy(*saddr, addr, len);
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-int
-stun_set_data(struct stun_message *stun, char *buf, size_t len)
-{
-    if (stun->data)
-        s_free(stun->data);
-    stun->data = s_malloc(len);
-    memcpy(stun->data, buf, len);
-    stun->data_len = len;
-    return 0;
-}

@@ -134,7 +134,7 @@ void turnresp_add_relay_address(struct stun_message *response, struct client *cl
 
     len = sizeof(addr);
     getsockname(client->peer, &addr, &len);
-    stun_set_sockaddr(response, ATTR_RELAY_ADDRESS, &addr, sizeof(addr));
+    stun_set_relay_address(response, &addr, sizeof(addr));
 }
 
 //------------------------------------------------------------------------------
@@ -148,7 +148,7 @@ turnresp_add_bandwidth(struct stun_message * response, struct client *client)
 static void
 turnresp_add_xor_mapped_address(struct stun_message * response, struct client *client)
 {
-    stun_set_sockaddr(response, ATTR_XOR_MAPPED_ADDRESS, &client->addr, sizeof(client->addr));
+    stun_set_xor_mapped_address(response, &client->addr, sizeof(client->addr));
 }
 
 //------------------------------------------------------------------------------
@@ -579,7 +579,7 @@ channel_queue_connstat(struct channel *channel, struct sockaddr *addr, socklen_t
     struct stun_message *stun;
 
     stun = stun_new(TURN_CHAN_CONF_INDICATION);
-    stun_set_sockaddr(stun, ATTR_PEER_ADDRESS, addr, len);
+    stun_set_peer_address(stun, addr, len);
     stun->channel = channel->num_self;
     stun->connect_status = status;
     channel->clnt_confirm = 1;
