@@ -483,7 +483,7 @@ turn_permit(turn_socket_t socket, struct sockaddr *addr, socklen_t len)
     switch (turn->state) {
         case TS_LISTEN_DONE:
             indication = stun_new(TURN_SEND_INDICATION);
-            stun_set_sockaddr(indication, ATTR_PEER_ADDRESS, addr, len);
+            stun_set_peer_address(indication, addr, len);
             channel = channel_new(turn, addr, len);
             indication->channel = channel->num_self;
             slen = stun_to_bytes(buf, sizeof(buf), indication);
@@ -655,7 +655,7 @@ turn_sendto_stun(struct turn_socket *turn, char *buf, size_t len, struct channel
     int ret;
 
     indication = stun_new(TURN_SEND_INDICATION);
-    stun_set_sockaddr(indication, ATTR_PEER_ADDRESS, &channel->addr, channel->addrlen);
+    stun_set_peer_address(indication, &channel->addr, channel->addrlen);
     indication->channel = channel->num_self;
     stun_set_data(indication, buf, len);
     slen = stun_to_bytes(sbuf, sizeof(sbuf), indication);
@@ -713,7 +713,7 @@ turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen)
             if ((channel = channel_by_addr(turn, addr, alen)) == NULL)
                 channel = channel_new(turn, addr, alen);
             indication = stun_new(TURN_CONN_STAT_INDICATION);
-            stun_set_sockaddr(indication, ATTR_PEER_ADDRESS, &channel->addr, channel->addrlen);
+            stun_set_peer_address(indication, &channel->addr, channel->addrlen);
             indication->channel = channel->num_self;
             indication->connect_status = TURN_CONNSTAT_CLOSED;
             slen = stun_to_bytes(sbuf, sizeof(sbuf), indication);

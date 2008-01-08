@@ -101,15 +101,24 @@ struct stun_message *
 stun_respond_to(struct stun_message *request, struct sockaddr *addr);
 
 int
-stun_set_sockaddr(struct stun_message *stun, int attr, struct sockaddr *addr, size_t len);
-
-int
-stun_set_data(struct stun_message *stun, char *buf, size_t len);
-
-int
 stun_xid_matches(struct stun_message *a, struct stun_message *b);
 
 int
 stun_is_ok_response(struct stun_message *response, struct stun_message *request);
+
+void
+stun_set_data(struct stun_message *stun, char *buf, size_t len);
+
+void
+stun_set_mapped_address(struct stun_message *stun, struct sockaddr *addr, socklen_t len);
+
+void
+stun_set_xor_mapped_address(struct stun_message *stun, struct sockaddr *addr, socklen_t len);
+
+void
+stun_set_peer_address(struct stun_message *stun, struct sockaddr *addr, socklen_t len);
+
+void
+stun_set_relay_address(struct stun_message *stun, struct sockaddr *addr, socklen_t len);
 
 #endif
