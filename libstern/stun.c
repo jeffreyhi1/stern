@@ -181,7 +181,7 @@ stun_is_ok_response(struct stun_message *response, struct stun_message *request)
         return 0;
     if (!stun_xid_matches(response, request))
         return 0;
-    if (response->message_type != (response->message_type | STUN_SUCCESS))
+    if (response->message_type != (request->message_type | STUN_SUCCESS))
         return 0;
     return 1;
 }
@@ -194,7 +194,7 @@ stun_is_err_response(struct stun_message *response, struct stun_message *request
         return 0;
     if (!stun_xid_matches(response, request))
         return 0;
-    if (response->message_type != (response->message_type | STUN_ERROR))
+    if (response->message_type != (request->message_type | STUN_ERROR))
         return 0;
     return 1;
 }
@@ -218,6 +218,7 @@ stun_set_mapped_address(struct stun_message *stun, struct sockaddr *addr, sockle
         s_free(stun->mapped_address);
     stun->mapped_address = s_malloc(len);
     memcpy(stun->mapped_address, addr, len);
+    stun->mapped_address_len = len;
 }
 
 //------------------------------------------------------------------------------
@@ -228,6 +229,7 @@ stun_set_xor_mapped_address(struct stun_message *stun, struct sockaddr *addr, so
         s_free(stun->xor_mapped_address);
     stun->xor_mapped_address = s_malloc(len);
     memcpy(stun->xor_mapped_address, addr, len);
+    stun->xor_mapped_address_len = len;
 }
 
 //------------------------------------------------------------------------------
@@ -238,6 +240,7 @@ stun_set_peer_address(struct stun_message *stun, struct sockaddr *addr, socklen_
         s_free(stun->peer_address);
     stun->peer_address = s_malloc(len);
     memcpy(stun->peer_address, addr, len);
+    stun->peer_address_len = len;
 }
 
 //------------------------------------------------------------------------------
@@ -248,4 +251,5 @@ stun_set_relay_address(struct stun_message *stun, struct sockaddr *addr, socklen
         s_free(stun->relay_address);
     stun->relay_address = s_malloc(len);
     memcpy(stun->relay_address, addr, len);
+    stun->relay_address_len = len;
 }
