@@ -14,17 +14,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <stdlib.h>
-#include <check.h>
+#include "check-libstern.h"
 
 int main(int argc, char **argv)
 {
     int num_failed;
-    Suite *parser;
     SRunner *runner;
 
-    parser = check_parser();
-    runner = srunner_create(parser);
+    runner = srunner_create(check_parser());
+    srunner_add_suite(runner, check_stun());
     srunner_run_all(runner, CK_VERBOSE);
     num_failed = srunner_ntests_failed(runner);
     srunner_free(runner);

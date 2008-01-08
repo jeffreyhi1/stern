@@ -343,7 +343,7 @@ allocate_stun_from_bytes(char *buf, size_t *len)
 
 //------------------------------------------------------------------------------
 static int
-allocate_other_from_attr(struct stun_message *stun, int num_other,
+reallocate_other_from_attr(struct stun_message *stun, int num_other,
                          attribute_t * attr)
 {
     struct stun_attribute *stun_attr;
@@ -447,7 +447,6 @@ allocate_unkown_attrs_from_attr(struct stun_message *stun, attribute_t * attr)
 {
     size_t alen = ntohs(attr->len);
     int i, num = alen / 2;
-    char *buf;
 
     if (alen < 2)
         return -1;
@@ -1069,42 +1068,52 @@ stun_from_bytes(char *buf, size_t *len)
                 break;
 
             case ATTR_USERNAME:
+                if (stun->username) s_free(stun->username);
                 err = allocate_string_from_attr(&stun->username, attr);
                 break;
 
             case ATTR_SERVER:
+                if (stun->server) s_free(stun->server);
                 err = allocate_string_from_attr(&stun->server, attr);
                 break;
 
             case ATTR_DATA:
+                if (stun->data) s_free(stun->data);
                 err = allocate_buf_from_attr(&stun->data, &stun->data_len, attr);
                 break;
 
             case ATTR_REALM:
+                if (stun->realm) s_free(stun->realm);
                 err = allocate_string_from_attr(&stun->realm, attr);
                 break;
 
             case ATTR_MAPPED_ADDRESS:
+                if (stun->mapped_address) s_free(stun->mapped_address);
                 err = allocate_sockaddr_from_attr(&stun->mapped_address, &stun->mapped_address_len, attr);
                 break;
 
             case ATTR_XOR_MAPPED_ADDRESS:
+                if (stun->xor_mapped_address) s_free(stun->xor_mapped_address);
                 err = allocate_sockaddr_from_xor_attr(&stun->xor_mapped_address, &stun->xor_mapped_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_PEER_ADDRESS:
+                if (stun->peer_address) s_free(stun->peer_address);
                 err = allocate_sockaddr_from_xor_attr(&stun->peer_address, &stun->peer_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_RELAY_ADDRESS:
+                if (stun->relay_address) s_free(stun->relay_address);
                 err = allocate_sockaddr_from_xor_attr(&stun->relay_address, &stun->relay_address_len, attr, (uint8_t *) buf);
                 break;
 
             case ATTR_ERROR_CODE:
+                if (stun->error_reason) s_free(stun->error_reason);
                 err = allocate_error_from_attr(stun, attr);
                 break;
 
             case ATTR_UNKNOWN_ATTRIBUTES:
+                if (stun->unknown_attributes) s_free(stun->unknown_attributes);
                 err = allocate_unkown_attrs_from_attr(stun, attr);
                 break;
 
@@ -1130,7 +1139,7 @@ stun_from_bytes(char *buf, size_t *len)
 
             default:
                 if (!stop_attr)
-                    num_other = allocate_other_from_attr(stun, num_other, attr);
+                    num_other = reallocate_other_from_attr(stun, num_other, attr);
                 break;
         }
         attr = (attribute_t *) (STUN_AHLEN + PAD4(alen) + (char *) attr);
@@ -1141,6 +1150,37 @@ stun_from_bytes(char *buf, size_t *len)
     }
 
     return stun;
+}
+
+//------------------------------------------------------------------------------
+const char *
+stun_error_reason(int error_code)
+{
+    switch (error_code) {
+        case 300: return "Try Alternate";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 420: return "Unknown Attribute";
+        case 430: return "Stale Credentials";
+        case 431: return "Integrity Check Failure";
+        case 432: return "Missing Username";
+        case 433: return "Use TLS";
+        case 434: return "Missing Realm";
+        case 435: return "Missing Nonce";
+        case 436: return "Unknown Username";
+        case 437: return "Allocation Mismatch";
+        case 438: return "Stale Nonce";
+        case 442: return "Unsupported Transport Protocol";
+        case 443: return "Invalid IP Address";
+        case 444: return "Invalid Port";
+        case 445: return "Operation for TCP Only";
+        case 446: return "Connection Already Exists";
+        case 486: return "Allocation Quota Reached";
+        case 500: return "Server Error";
+        case 507: return "Insufficient Capacity";
+        case 600: return "Global Failure";
+        default:  return "Internal error";
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -1155,4 +1195,103 @@ void
 stun_add_xact_password(char *xact_id, char *password, int len)
 {
     add_auth_key_by_xid(password, len, (uint8_t *) xact_id);
+}
+
+//------------------------------------------------------------------------------
+void
+stun_free(struct stun_message *stun)
+{
+    int i;
+
+    if (stun->error_reason)
+        s_free(stun->error_reason);
+    if (stun->username)
+        s_free(stun->username);
+    if (stun->realm)
+        s_free(stun->realm);
+    if (stun->server)
+        s_free(stun->server);
+    if (stun->mapped_address)
+        s_free(stun->mapped_address);
+    if (stun->xor_mapped_address)
+        s_free(stun->xor_mapped_address);
+    if (stun->alternate_server)
+        s_free(stun->alternate_server);
+    if (stun->unknown_attributes)
+        s_free(stun->unknown_attributes);
+    if (stun->peer_address)
+        s_free(stun->peer_address);
+    if (stun->relay_address)
+        s_free(stun->relay_address);
+    if (stun->requested_ip_port)
+        s_free(stun->requested_ip_port);
+    if (stun->data)
+        s_free(stun->data);
+    if (stun->_password)
+        s_free(stun->_password);
+    if (stun->other) {
+        for (i = 0; stun->other[i].type; i++) {
+            if (stun->other[i].value)
+                s_free(stun->other[i].value);
+        }
+        s_free(stun->other);
+    }
+
+    s_free(stun);
+}
+
+//------------------------------------------------------------------------------
+struct stun_message *
+stun_new(int type)
+{
+    struct stun_message *stun;
+    int i;
+
+    stun = s_malloc(sizeof(struct stun_message));
+    memset(stun, 0, sizeof(struct stun_message));
+
+    // Fields where 0 is a valid value
+    stun->channel = -1;
+    stun->requested_transport = -1;
+    stun->lifetime = -1;
+    stun->requested_port_align = -1;
+    stun->connect_status = -1;
+
+    stun->message_type = type;
+    for (i = 0; i < STUN_XIDLEN; i++)
+        stun->xact_id[i] = rand() & 0xFF;
+    return stun;
+}
+
+//------------------------------------------------------------------------------
+int
+stun_set_sockaddr(struct stun_message *stun, int attr, struct sockaddr *addr, socklen_t len)
+{
+    struct sockaddr **saddr;
+
+    switch (attr) {
+        case ATTR_MAPPED_ADDRESS: saddr = &stun->mapped_address; break;
+        case ATTR_XOR_MAPPED_ADDRESS: saddr = &stun->xor_mapped_address; break;
+        case ATTR_RELAY_ADDRESS: saddr = &stun->relay_address; break;
+        case ATTR_PEER_ADDRESS: saddr = &stun->peer_address; break;
+        default: return -1;
+    }
+
+    if (*saddr)
+        s_free(*saddr);
+    *saddr = s_malloc(len);
+    memcpy(*saddr, addr, len);
+    return 0;
+}
+
+//------------------------------------------------------------------------------
+int
+stun_set_data(struct stun_message *stun, char *buf, size_t len)
+{
+    if (stun->data)
+        s_free(stun->data);
+    stun->data = s_malloc(len);
+    memcpy(stun->data, buf, len);
+    stun->data_len = len;
+    return 0;
 }
