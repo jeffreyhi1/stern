@@ -47,6 +47,7 @@
 #define ATTR_CONNECT_STATUS       0x0023
 
 #define ATTR_SERVER               0x8022
+#define ATTR_ALTERNATE_SERVER     0x8023
 #define ATTR_FINGERPRINT          0x8028
 
 #define STUN_SUCCESS              0x0100

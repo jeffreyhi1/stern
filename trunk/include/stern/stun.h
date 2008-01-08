@@ -48,8 +48,8 @@ struct stun_message {
     size_t                 mapped_address_len;
     struct sockaddr       *xor_mapped_address;
     size_t                 xor_mapped_address_len;
-    struct sockaddr       *alternate_address;
-    size_t                 alternate_address_len;
+    struct sockaddr       *alternate_server;
+    size_t                 alternate_server_len;
     enum stun_validity     fingerprint;
     enum stun_validity     message_integrity;
 

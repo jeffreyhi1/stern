@@ -14,12 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <netinet/in.h>
-#include <string.h>
-#include <stdio.h>
-#include <check.h>
-
-#include <stern/stun.h>
+#include "check-libstern.h"
 
 //------------------------------------------------------------------------------
 void
@@ -975,7 +970,7 @@ check_parser()
     Suite *parser;
     TCase *test;
 
-    parser = suite_create("libstern STUN parser");
+    parser = suite_create("libstern parser");
 
     test = tcase_create("header");
     tcase_add_test(test, msghdr_short);
