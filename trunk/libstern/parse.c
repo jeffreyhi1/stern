@@ -312,6 +312,13 @@ set_message_integrity_from_attr(struct stun_message *stun, char *buf,
     HMAC(EVP_sha1(), key, len, (uint8_t *) buf, blen, hmac, &hmac_len);
     msg->len = msglen;
 
+#if 0
+    int i;
+    for (i = 0; i < sizeof(hmac); i++)
+        printf("0x%02x, \n", hmac[i]);
+    printf("\n");
+#endif
+
     if (memcmp(attr->v.bytes, hmac, hmac_len) != 0) {
         stun->message_integrity = STUN_ATTR_PRESENT_BUT_INVALID;
     } else {
