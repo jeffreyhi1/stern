@@ -18,12 +18,25 @@
 
 int main(int argc, char **argv)
 {
-    int num_failed;
+    int num_failed, num_run, i;
     SRunner *runner;
+    TestResult **results;
 
     runner = srunner_create(check_parser());
     srunner_add_suite(runner, check_stun());
-    srunner_run_all(runner, CK_VERBOSE);
+    srunner_run_all(runner, CK_MINIMAL);
+
+    num_run = srunner_ntests_run(runner);
+    results = srunner_results(runner);
+    for (i = 0; i < num_run; i++) {
+        printf("%s%s%s\n",
+               tr_rtype(results[i]) == CK_PASS ? "[32m" :
+               tr_rtype(results[i]) == CK_FAILURE ? "[31m" :
+               tr_rtype(results[i]) == CK_ERROR ? "[31m" : "",
+               tr_str(results[i]),
+               "[0m");
+    }
+
     num_failed = srunner_ntests_failed(runner);
     srunner_free(runner);
 
