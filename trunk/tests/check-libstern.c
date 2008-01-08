@@ -24,6 +24,7 @@ int main(int argc, char **argv)
 
     runner = srunner_create(check_parser());
     srunner_add_suite(runner, check_stun());
+    srunner_add_suite(runner, check_turn());
     srunner_run_all(runner, CK_MINIMAL);
 
     num_run = srunner_ntests_run(runner);
