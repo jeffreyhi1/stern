@@ -143,9 +143,11 @@ stun_respond_to(struct stun_message *req, struct sockaddr *addr)
     if (!IS_REQUEST(req->message_type))
         return NULL;
 
+#if 0
     /* Check figerprint when present */
     if (req->fingerprint == STUN_ATTR_PRESENT_BUT_INVALID)
         return make_error_response(req, addr, 400);
+#endif
 
     /* Check integrity when present */
     if (req->message_integrity == STUN_ATTR_PRESENT_BUT_INVALID

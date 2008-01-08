@@ -356,9 +356,12 @@ reallocate_other_from_attr(struct stun_message *stun, int num_other,
     stun_attr->type = ntohs(attr->type);
     stun_attr->len = ntohs(attr->len);
     stun_attr->is_unknown = 1;
-    stun_attr->value = s_malloc(stun_attr->len + 1);
-    memcpy(stun_attr->value, attr->v.bytes, stun_attr->len);
-    ((uint8_t *) stun_attr->value)[stun_attr->len] = '\0';
+    stun_attr->value = NULL;
+    if (stun_attr->len) {
+        stun_attr->value = s_malloc(stun_attr->len + 1);
+        memcpy(stun_attr->value, attr->v.bytes, stun_attr->len);
+        ((uint8_t *) stun_attr->value)[stun_attr->len] = '\0';
+    }
 
     /* end marker type=0 */
     stun_attr = &stun->other[num_other];
@@ -1056,7 +1059,7 @@ stun_from_bytes(char *buf, size_t *len)
     if (!stun) return NULL;
 
     attr = (attribute_t *) (buf + STUN_HLEN);
-    while (err == 0 && (STUN_AHLEN + (char *) attr) < (buf + *len)) {
+    while (err == 0 && (STUN_AHLEN + (char *) attr) <= (buf + *len)) {
         alen = ntohs(attr->len);
         if ((STUN_AHLEN + PAD4(alen) + (char *) attr) > (buf + *len)) {
             err = 1;
