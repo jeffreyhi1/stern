@@ -36,6 +36,7 @@ int main(int argc, char **argv)
                tr_str(results[i]),
                "[0m");
     }
+    free(results);
 
     num_failed = srunner_ntests_failed(runner);
     srunner_free(runner);
