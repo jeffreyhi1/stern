@@ -27,11 +27,12 @@ enum fuzz {
     F_SUCCESS               = 0,
     F_ERROR                 = 1 << 0,
     F_XACT_ID               = 1 << 1,
-    F_NO_PEER_ADDRESS       = 1 << 2,
-    F_NO_XOR_MAPPED_ADDRESS = 1 << 3,
-    F_NO_BANDWIDTH          = 1 << 4,
-    F_NO_LIFETIME           = 1 << 5,
-    F_NO_RELAY_ADDRESS      = 1 << 6,
+    F_CHANNEL               = 1 << 2,
+    F_NO_PEER_ADDRESS       = 1 << 3,
+    F_NO_XOR_MAPPED_ADDRESS = 1 << 4,
+    F_NO_BANDWIDTH          = 1 << 5,
+    F_NO_LIFETIME           = 1 << 6,
+    F_NO_RELAY_ADDRESS      = 1 << 7,
 };
 
 //------------------------------------------------------------------------------
@@ -90,23 +91,15 @@ mocktcpsrv_read()
 
 //------------------------------------------------------------------------------
 static void
-mocktcpsrv_write_stun(struct stun_message *stun)
+mocktcpsrv_write_stun(struct stun_message *stun, int channel, int len)
 {
-    int len, ret;
-    uint16_t val;
+    uint16_t val1, val2;
 
-    len = stun_to_bytes(buf, sizeof(buf), stun);
-
-    val = htons(TURN_CHANNEL_CTRL);
-    ret = send(cli, &val, sizeof(val), MSG_MORE);
-    fail_if(ret != 2, "Invalid write");
-
-    val = htons(len);
-    ret = send(cli, &val, sizeof(val), MSG_MORE);
-    fail_if(ret != 2, "Invalid write");
-
-    ret = send(cli, buf, len, 0);
-    fail_if(ret != len, "Invalid write");
+    val1 = htons(channel);
+    val2 = htons(len);
+    fail_if(send(cli, &val1, sizeof(val1), MSG_MORE) != 2, "Invalid write");
+    fail_if(send(cli, &val2, sizeof(val2), MSG_MORE) != 2, "Invalid write");
+    fail_if(send(cli, buf, len, 0) != len, "Invalid write");
 }
 
 //------------------------------------------------------------------------------
@@ -115,6 +108,7 @@ mocksrv_do_allocate(enum fuzz fuzz)
 {
     struct sockaddr_in sin;
     struct stun_message *request, *response;
+    int channel, len;
 
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = rand();
@@ -131,7 +125,6 @@ mocksrv_do_allocate(enum fuzz fuzz)
 
     if (fuzz & F_XACT_ID)
         response->xact_id[5] ^= 0xff;
-
     if (!(fuzz & F_NO_RELAY_ADDRESS))
         stun_set_relay_address(response, &sin, sizeof(sin));
     if (!(fuzz & F_NO_XOR_MAPPED_ADDRESS))
@@ -141,7 +134,13 @@ mocksrv_do_allocate(enum fuzz fuzz)
     if (!(fuzz & F_NO_LIFETIME))
         response->lifetime = 600;
 
-    mocktcpsrv_write_stun(response);
+    if (fuzz & F_CHANNEL)
+        channel = rand();
+    else
+        channel = TURN_CHANNEL_CTRL;
+
+    len = stun_to_bytes(buf, sizeof(buf), response);
+    mocktcpsrv_write_stun(buf, channel, len);
     stun_free(request);
     stun_free(response);
 }
@@ -189,6 +188,7 @@ START_TEST(tcpsock_bind)
         F_NO_XOR_MAPPED_ADDRESS,
         F_NO_BANDWIDTH,
         F_NO_LIFETIME,
+        F_CHANNEL,
     };
 
     ret = turn_bind(tsock, NULL, 0);
@@ -196,27 +196,25 @@ START_TEST(tcpsock_bind)
 
     mocksrv_do_allocate(fuzzes[_i]);
 
+    ret = turn_bind(tsock, NULL, 0);
     switch (fuzzes[_i]) {
         case F_SUCCESS:
-            ret = turn_bind(tsock, NULL, 0);
             fail_unless(ret == 0, "Bind failed");
             break;
 
         case F_XACT_ID:
-            ret = turn_bind(tsock, NULL, 0);
+        case F_CHANNEL:
             fail_unless(ret == -1 && errno == EAGAIN, "Expecting soft error");
             break;
 
         case F_ERROR:
         case F_NO_RELAY_ADDRESS:
         case F_NO_XOR_MAPPED_ADDRESS:
-            ret = turn_bind(tsock, NULL, 0);
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
             break;
 
         case F_NO_BANDWIDTH:
         case F_NO_LIFETIME:
-            ret = turn_bind(tsock, NULL, 0);
             fail_unless(ret == 0, "Expecting no error");
             break;
 
@@ -238,7 +236,7 @@ check_turn()
     test = tcase_create("tcp_socket");
     tcase_add_checked_fixture(test, tcpsock_setup, tcpsock_teardown);
     tcase_add_test(test, tcpsock_init);
-    tcase_add_loop_test(test, tcpsock_bind, 0, 7);
+    tcase_add_loop_test(test, tcpsock_bind, 0, 8);
     suite_add_tcase(turn, test);
 
     return turn;
