@@ -223,6 +223,22 @@ mocksrv_do_bind(enum fuzz fuzz)
 
 //------------------------------------------------------------------------------
 static void
+mocksrv_do_permit()
+{
+    struct sockaddr_in *sin;
+    struct stun_message *request;
+    int channel, len;
+
+    request = mocktcpsrv_read();
+    fail_unless(request->message_type == TURN_SEND_INDICATION, "Bad request");
+    fail_if(request->channel == -1, "Bad channel");
+    fail_if(request->peer_address == NULL, "Bad peer address");
+
+    stun_free(request);
+}
+
+//------------------------------------------------------------------------------
+static void
 mocksrv_do_listen(enum fuzz fuzz)
 {
     struct sockaddr_in sin;
@@ -470,6 +486,7 @@ START_TEST(tcpsock_permit)
     }
 
     ret = turn_permit(tsock, (struct sockaddr *) &sin, sizeof(sin));
+    mocksrv_do_permit();
     switch (fuzzes[_i]) {
         case F_SUCCESS:
             fail_unless(ret == 0, "Permit failed");
