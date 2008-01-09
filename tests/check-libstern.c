@@ -18,9 +18,13 @@
 
 int main(int argc, char **argv)
 {
-    int num_failed, num_run, i;
+    int num_failed, num_run, i, num;
     SRunner *runner;
     TestResult **results;
+    int verbose = 0;
+
+    if (argc > 1 && strcmp(argv[1], "-v") == 0)
+        verbose = 1;
 
     runner = srunner_create(check_parser());
     srunner_add_suite(runner, check_stun());
@@ -28,8 +32,16 @@ int main(int argc, char **argv)
     srunner_run_all(runner, CK_MINIMAL);
 
     num_run = srunner_ntests_run(runner);
-    results = srunner_results(runner);
-    for (i = 0; i < num_run; i++) {
+    num_failed = srunner_ntests_failed(runner);
+
+    if (verbose) {
+        results = srunner_results(runner);
+        num = num_run;
+    } else {
+        results = srunner_failures(runner);
+        num = num_failed;
+    }
+    for (i = 0; i < num; i++) {
         printf("%s%s%s\n",
                tr_rtype(results[i]) == CK_PASS ? "[32m" :
                tr_rtype(results[i]) == CK_FAILURE ? "[31m" :
@@ -39,7 +51,6 @@ int main(int argc, char **argv)
     }
     free(results);
 
-    num_failed = srunner_ntests_failed(runner);
     srunner_free(runner);
 
     return num_failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

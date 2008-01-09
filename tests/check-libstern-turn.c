@@ -56,6 +56,26 @@ enum op {
 
 //------------------------------------------------------------------------------
 static void
+check_sockaddr(struct sockaddr *addr1, socklen_t alen1, struct sockaddr *addr2, socklen_t alen2)
+{
+    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
+    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
+    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
+    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
+
+    fail_unless(alen1 == alen2, "Bad length");
+    fail_unless(addr1->sa_family == addr2->sa_family, "Bad family");
+    if (addr1->sa_family == AF_INET) {
+        fail_unless(sina->sin_addr.s_addr == sinb->sin_addr.s_addr, "Bad address");
+        fail_unless(sina->sin_port == sinb->sin_port, "Bad port");
+    } else if (addr1->sa_family == AF_INET6) {
+        fail_unless(memcmp(sin6a->sin6_addr.s6_addr, sin6b->sin6_addr.s6_addr, 16) == 0, "Bad address");
+        fail_unless(sin6a->sin6_port == sin6b->sin6_port, "Bad port");
+    }
+}
+
+//------------------------------------------------------------------------------
+static void
 tcpsock_opmutex(enum op op)
 {
     int ret;
@@ -68,11 +88,6 @@ tcpsock_opmutex(enum op op)
     if (op & T_BIND) {
         ret = turn_bind(tsock, NULL, 0);
         fail_unless(ret == -1 && errno == EINVAL, "Bind should not be allowed");
-    }
-
-    if (op & T_GETSOCKNAME) {
-        ret = turn_getsockname(tsock, NULL, 0);
-        fail_unless(ret == -1 && errno == EINVAL, "Getsockname should not be allowed");
     }
 
     if (op & T_LISTEN) {
@@ -107,6 +122,11 @@ tcpsock_opmutex(enum op op)
         fail_unless(ret == -1 && errno == EINVAL, "Shutdown should not be allowed");
     }
 
+    if (op & T_GETSOCKNAME) {
+        ret = turn_getsockname(tsock, NULL, 0);
+        fail_unless(ret == -1 && errno == EINVAL, "Getsockname should not be allowed");
+    }
+
 }
 
 //------------------------------------------------------------------------------
@@ -136,7 +156,7 @@ tcpsock_setup()
     ret = turn_set_nonblocking(tsock);
     fail_if(ret == -1, "Failed nonblocking IO");
 
-    fcntl(cli, F_SETFL, O_NONBLOCK);
+    // fcntl(cli, F_SETFL, O_NONBLOCK);
 
     tcpsock_opmutex(~(T_BIND|T_LISTEN));
 }
@@ -295,7 +315,7 @@ mocksrv_do_accept(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
         response = stun_new(TURN_ALLOCATION_ERROR);
 
     if (!(fuzz & F_NO_PEER_ADDRESS))
-        stun_set_peer_address(response, &raddr, sizeof(struct sockaddr_in));
+        stun_set_peer_address(response, sin, len);
     if (!(fuzz & F_NO_CHANNEL))
         response->channel = chan;
     if (!(fuzz & F_NO_CONNECT_STATUS))
@@ -348,7 +368,7 @@ mocksrv_do_shut(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
         response = stun_new(TURN_ALLOCATION_ERROR);
 
     if (!(fuzz & F_NO_PEER_ADDRESS))
-        stun_set_peer_address(response, &raddr, sizeof(struct sockaddr_in));
+        stun_set_peer_address(response, sin, len);
     if (!(fuzz & F_NO_CHANNEL))
         response->channel = chan;
     if (!(fuzz & F_NO_CONNECT_STATUS))
@@ -367,6 +387,40 @@ mocksrv_do_shut(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
     }
     stun_free(response);
 }
+
+//------------------------------------------------------------------------------
+static int
+mocksrv_do_send_stun(char *buf, int len, struct sockaddr *addr, socklen_t alen)
+{
+    struct stun_message *request;
+    int chan;
+
+    request = mocktcpsrv_read();
+    fail_if(request == NULL, "Bad request");
+    fail_unless(request->message_type == TURN_SEND_INDICATION, "Bad request");
+    fail_unless(request->data_len == len, "Bad length");
+    fail_if(request->data == NULL, "Bad data");
+    fail_unless(memcmp(buf, request->data, len) == 0, "Incorrect data");
+    check_sockaddr(addr, alen, request->peer_address, request->peer_address_len);
+    fail_if(request->channel == -1, "Bad channel");
+    chan = request->channel;
+    stun_free(request);
+    return chan;
+}
+
+//------------------------------------------------------------------------------
+static void
+mocksrv_do_send_raw(char *rbuf, int len, int chan)
+{
+    struct stun_message *request;
+
+    request = mocktcpsrv_read();
+    fail_unless(request == NULL, "Bad frame");
+    fail_unless(length == len, "Bad length");
+    fail_unless(channel == chan, "Bad channel");
+    fail_unless(memcmp(rbuf, buf, len) == 0, "Incorrect data");
+}
+
 
 //------------------------------------------------------------------------------
 static void
@@ -466,8 +520,6 @@ START_TEST(tcpsock_getsockname)
 {
     int ret;
     struct sockaddr addr;
-    struct sockaddr_in *sina = (struct sockaddr_in *) &addr;
-    struct sockaddr_in *sinb = (struct sockaddr_in *) &raddr;
     socklen_t alen = sizeof(addr);
 
     ret = turn_bind(tsock, NULL, 0);
@@ -476,10 +528,7 @@ START_TEST(tcpsock_getsockname)
 
     ret = turn_getsockname(tsock, &addr, &alen);
     fail_unless(ret == 0, "Getsockname failed");
-    fail_unless(addr.sa_family == raddr.sa_family, "Bad family");
-    fail_unless(alen == sizeof(struct sockaddr_in), "Bad size");
-    fail_unless(sina->sin_addr.s_addr == sinb->sin_addr.s_addr, "Bad address");
-    fail_unless(sina->sin_port == sinb->sin_port, "Bad port");
+    check_sockaddr(&addr, alen, &raddr, sizeof(struct sockaddr_in));
 }
 END_TEST
 
@@ -593,7 +642,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(tcpsock_recvfrom_accept)
 {
-    int ret, len, i;
+    int ret;
     struct sockaddr_in sina, sinb;
     socklen_t blen = sizeof(sinb);
     char rbuf[1024];
@@ -622,6 +671,10 @@ START_TEST(tcpsock_recvfrom_accept)
     ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
     switch (fuzzes[_i]) {
         case F_SUCCESS:
+            fail_unless(ret == -2 && errno == EAGAIN, "Expecting retry request");
+            check_sockaddr(&sina, sizeof(struct sockaddr_in), &sinb, blen);
+            break;
+
         case F_ERROR:
         case F_NO_PEER_ADDRESS:
         case F_NO_CHANNEL:
@@ -663,7 +716,7 @@ START_TEST(tcpsock_recvfrom_small)
     ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
     mocksrv_do_permit();
     mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
-    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), NULL, 0);
 
     /* Read tiny data */
     for (i = 0; i < 10; i++) {
@@ -674,6 +727,7 @@ START_TEST(tcpsock_recvfrom_small)
             case F_SUCCESS:
                 fail_unless(ret == len, "Invalid size");
                 fail_unless(memcmp(rbuf, buf, len) == 0, "Invalid data");
+                check_sockaddr(&sina, sizeof(struct sockaddr_in), &sinb, blen);
                 tcpsock_opmutex(~(T_GETSOCKNAME|T_PERMIT|T_RECVFROM|T_SENDTO|T_SHUTDOWN));
                 break;
 
@@ -825,6 +879,113 @@ START_TEST(tcpsock_recvfrom_eof)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(tcpsock_sendto_small)
+{
+    int ret, len, i, j, chan;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+
+    sina.sin_port = rand();
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+
+    /* Read tiny data */
+    for (i = 0; i < 10; i++) {
+        len = rand() & 0xFF;
+        for (j = 0; j < len; j++)
+            rbuf[j] = rand();
+        switch (_i) {
+            case 0: // F_SUCCESS
+                ret = turn_sendto(tsock, rbuf, len, (struct sockaddr *) &sinb, blen);
+                if (i == 0)
+                    chan = mocksrv_do_send_stun(rbuf, len, (struct sockaddr *) &sinb, blen);
+                else
+                    mocksrv_do_send_raw(rbuf, len, chan);
+                break;
+
+            case 1: // F_WRITEERR
+                shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
+                ret = turn_sendto(tsock, rbuf, len, (struct sockaddr *) &sinb, blen);
+                fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+                tcpsock_opmutex(~0);
+                return;
+
+            case 2: // Send to non existend
+                sinb.sin_port ^= 0xFFFF;
+                ret = turn_sendto(tsock, rbuf, len, (struct sockaddr *) &sinb, blen);
+                fail_unless(ret == -1 && errno != EAGAIN, "Expecting error");
+                return;
+
+            default:
+                fail_if(1, "Unhandled fuzz case");
+        }
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(tcpsock_shutdown)
+{
+    int ret, len, i, j, chan;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+
+    sina.sin_port = rand();
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+
+    switch (_i) {
+        case 0: // F_SUCCESS
+            ret = turn_shutdown(tsock, (struct sockaddr *) &sinb, blen);
+            fail_unless(ret == 0, "Failed to shutdown");
+            break;
+
+        case 1: // F_WRITEERR
+            shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
+            ret = turn_shutdown(tsock, (struct sockaddr *) &sinb, blen);
+            fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+            tcpsock_opmutex(~0);
+            return;
+
+        case 2: // Shutdown non existent
+            sinb.sin_port ^= 0xFFFF;
+            ret = turn_shutdown(tsock, (struct sockaddr *) &sinb, blen);
+            fail_unless(ret == -1 && errno != EAGAIN, "Expecting error");
+            return;
+
+        default:
+            fail_if(1, "Unhandled fuzz case");
+    }
+}
+END_TEST
+
+
+
+//------------------------------------------------------------------------------
 Suite *
 check_turn()
 {
@@ -844,6 +1005,8 @@ check_turn()
     tcase_add_loop_test(test, tcpsock_recvfrom_small, 0, 3);
     tcase_add_loop_test(test, tcpsock_recvfrom_large, 0, 3);
     tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 6);
+    tcase_add_loop_test(test, tcpsock_sendto_small, 0, 3);
+    tcase_add_loop_test(test, tcpsock_shutdown, 0, 3);
     suite_add_tcase(turn, test);
 
     return turn;
