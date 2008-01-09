@@ -712,7 +712,7 @@ turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen)
     switch (turn->state) {
         case TS_LISTEN_DONE:
             if ((channel = channel_by_addr(turn, addr, alen)) == NULL)
-                channel = channel_new(turn, addr, alen);
+                RETURN_ERROR(EINVAL, -1);
             indication = stun_new(TURN_CONN_STAT_INDICATION);
             stun_set_peer_address(indication, &channel->addr, channel->addrlen);
             indication->channel = channel->num_self;
