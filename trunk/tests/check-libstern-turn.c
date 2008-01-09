@@ -16,25 +16,30 @@
  */
 #include "check-libstern.h"
 
+#include <netinet/tcp.h>
+
 turn_socket_t tsock;
 int srv, cli;
 struct sockaddr caddr, raddr;
 socklen_t caddrlen = sizeof(caddr);
 unsigned int channel, length;
-char buf[1024];
+char buf[8192];
 
 enum fuzz {
     F_SUCCESS               = 0,
     F_ERROR                 = 1 << 0,
     F_READERR               = 1 << 1,
-    F_WRITEERR              = 1 << 2,
-    F_XACT_ID               = 1 << 3,
-    F_CHANNEL               = 1 << 4,
-    F_NO_PEER_ADDRESS       = 1 << 5,
-    F_NO_XOR_MAPPED_ADDRESS = 1 << 6,
-    F_NO_BANDWIDTH          = 1 << 7,
-    F_NO_LIFETIME           = 1 << 8,
-    F_NO_RELAY_ADDRESS      = 1 << 9,
+    F_READERR_UNALIGNED     = 1 << 2,
+    F_WRITEERR              = 1 << 3,
+    F_XACT_ID               = 1 << 4,
+    F_CHANNEL               = 1 << 5,
+    F_NO_PEER_ADDRESS       = 1 << 6,
+    F_NO_XOR_MAPPED_ADDRESS = 1 << 7,
+    F_NO_BANDWIDTH          = 1 << 8,
+    F_NO_LIFETIME           = 1 << 9,
+    F_NO_RELAY_ADDRESS      = 1 << 10,
+    F_NO_CHANNEL            = 1 << 11,
+    F_NO_CONNECT_STATUS     = 1 << 12,
 };
 
 enum op {
@@ -110,6 +115,7 @@ tcpsock_setup()
 {
     struct sockaddr addr;
     socklen_t addrlen = sizeof(addr);
+    static int one = 1;
     int ret;
 
     srv = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -124,6 +130,8 @@ tcpsock_setup()
 
     cli = accept(srv, &caddr, &caddrlen);
     fail_if(cli == -1, "No connection received");
+
+    setsockopt(cli, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
     ret = turn_set_nonblocking(tsock);
     fail_if(ret == -1, "Failed nonblocking IO");
@@ -162,7 +170,7 @@ mocktcpsrv_read()
 
 //------------------------------------------------------------------------------
 static void
-mocktcpsrv_write_stun(char *buf, int channel, int len)
+mocktcpsrv_write(char *buf, int channel, int len)
 {
     uint16_t val1, val2;
 
@@ -190,10 +198,10 @@ mocksrv_do_bind(enum fuzz fuzz)
     fail_unless(request->message_type == TURN_ALLOCATION_REQUEST, "Bad request");
     fail_unless(request->requested_transport == TURN_TRANSPORT_TCP, "Bad transport");
 
-    if (fuzz & F_ERROR)
-        response = stun_init_response(TURN_ALLOCATION_ERROR, request);
-    else
+    if (!(fuzz & F_ERROR))
         response = stun_init_response(TURN_ALLOCATION_SUCCESS, request);
+    else
+        response = stun_init_response(TURN_ALLOCATION_ERROR, request);
 
     if (fuzz & F_XACT_ID)
         response->xact_id[5] ^= 0xff;
@@ -206,14 +214,14 @@ mocksrv_do_bind(enum fuzz fuzz)
     if (!(fuzz & F_NO_LIFETIME))
         response->lifetime = 600;
 
-    if (fuzz & F_CHANNEL)
-        channel = rand();
-    else
+    if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
+    else
+        channel = 42;
 
     if (!(fuzz & F_READERR)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write_stun(buf, channel, len);
+        mocktcpsrv_write(buf, channel, len);
     } else {
         close(cli);
     }
@@ -225,9 +233,7 @@ mocksrv_do_bind(enum fuzz fuzz)
 static void
 mocksrv_do_permit()
 {
-    struct sockaddr_in *sin;
     struct stun_message *request;
-    int channel, len;
 
     request = mocktcpsrv_read();
     fail_unless(request->message_type == TURN_SEND_INDICATION, "Bad request");
@@ -252,28 +258,113 @@ mocksrv_do_listen(enum fuzz fuzz)
     request = mocktcpsrv_read();
     fail_unless(request->message_type == TURN_LISTEN_REQUEST, "Bad request");
 
-    if (fuzz & F_ERROR)
-        response = stun_init_response(TURN_LISTEN_ERROR, request);
-    else
+    if (!(fuzz & F_ERROR))
         response = stun_init_response(TURN_LISTEN_SUCCESS, request);
+    else
+        response = stun_init_response(TURN_LISTEN_ERROR, request);
 
     if (fuzz & F_XACT_ID)
         response->xact_id[5] ^= 0xff;
     if (!(fuzz & F_NO_LIFETIME))
         response->lifetime = 600;
 
-    if (fuzz & F_CHANNEL)
-        channel = rand();
-    else
+    if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
+    else
+        channel = 42;
 
     if (!(fuzz & F_READERR)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write_stun(buf, channel, len);
+        mocktcpsrv_write(buf, channel, len);
     } else {
         close(cli);
     }
     stun_free(request);
+    stun_free(response);
+}
+
+//------------------------------------------------------------------------------
+static void
+mocksrv_do_accept(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
+{
+    struct stun_message *response;
+
+    if (!(fuzz & F_ERROR))
+        response = stun_new(TURN_CONN_STAT_INDICATION);
+    else
+        response = stun_new(TURN_ALLOCATION_ERROR);
+
+    if (!(fuzz & F_NO_PEER_ADDRESS))
+        stun_set_peer_address(response, &raddr, sizeof(struct sockaddr_in));
+    if (!(fuzz & F_NO_CHANNEL))
+        response->channel = chan;
+    if (!(fuzz & F_NO_CONNECT_STATUS))
+        response->connect_status = TURN_CONNSTAT_ESTABLISHED;
+
+    if (!(fuzz & F_CHANNEL))
+        channel = TURN_CHANNEL_CTRL;
+    else
+        channel = 42;
+
+    if (!(fuzz & F_READERR)) {
+        len = stun_to_bytes(buf, sizeof(buf), response);
+        mocktcpsrv_write(buf, channel, len);
+    } else {
+        close(cli);
+    }
+    stun_free(response);
+}
+
+//------------------------------------------------------------------------------
+static void
+mocksrv_do_recv(size_t len, int chan, enum fuzz fuzz)
+{
+    int i, channel;
+
+    for (i = 0; i < len; i++)
+        buf[i] = rand();
+
+    if (!(fuzz & F_CHANNEL))
+        channel = chan;
+    else
+        channel = 42;
+
+    if (!(fuzz & F_READERR)) {
+        mocktcpsrv_write(buf, channel, len);
+    } else {
+        close(cli);
+    }
+}
+
+//------------------------------------------------------------------------------
+static void
+mocksrv_do_shut(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
+{
+    struct stun_message *response;
+
+    if (!(fuzz & F_ERROR))
+        response = stun_new(TURN_CONN_STAT_INDICATION);
+    else
+        response = stun_new(TURN_ALLOCATION_ERROR);
+
+    if (!(fuzz & F_NO_PEER_ADDRESS))
+        stun_set_peer_address(response, &raddr, sizeof(struct sockaddr_in));
+    if (!(fuzz & F_NO_CHANNEL))
+        response->channel = chan;
+    if (!(fuzz & F_NO_CONNECT_STATUS))
+        response->connect_status = TURN_CONNSTAT_CLOSED;
+
+    if (!(fuzz & F_CHANNEL))
+        channel = TURN_CHANNEL_CTRL;
+    else
+        channel = 42;
+
+    if (!(fuzz & F_READERR)) {
+        len = stun_to_bytes(buf, sizeof(buf), response);
+        mocktcpsrv_write(buf, channel, len);
+    } else {
+        close(cli);
+    }
     stun_free(response);
 }
 
@@ -500,6 +591,240 @@ START_TEST(tcpsock_permit)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(tcpsock_recvfrom_accept)
+{
+    int ret, len, i;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+    enum fuzz fuzzes[] = {
+        F_SUCCESS,
+        F_ERROR,
+        F_READERR,
+        F_NO_PEER_ADDRESS,
+        F_NO_CHANNEL,
+        F_NO_CONNECT_STATUS,
+    };
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+
+    /* "Accept" the socket */
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, fuzzes[_i]);
+    ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+    switch (fuzzes[_i]) {
+        case F_SUCCESS:
+        case F_ERROR:
+        case F_NO_PEER_ADDRESS:
+        case F_NO_CHANNEL:
+        case F_NO_CONNECT_STATUS:
+            fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
+            break;
+
+        case F_READERR:
+            fail_unless(ret == -1 && errno != EAGAIN, "Expecting retry request");
+            break;
+
+        default:
+            fail_if(1, "Unhandled fuzz case");
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(tcpsock_recvfrom_small)
+{
+    int ret, len, i;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+    enum fuzz fuzzes[] = {
+        F_SUCCESS,
+        F_READERR,
+        F_CHANNEL,
+    };
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+
+    /* Read tiny data */
+    for (i = 0; i < 10; i++) {
+        len = rand() & 0xFF;
+        mocksrv_do_recv(len, 1, fuzzes[_i]);
+        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+        switch (fuzzes[_i]) {
+            case F_SUCCESS:
+                fail_unless(ret == len, "Invalid size");
+                fail_unless(memcmp(rbuf, buf, len) == 0, "Invalid data");
+                tcpsock_opmutex(~(T_GETSOCKNAME|T_PERMIT|T_RECVFROM|T_SENDTO|T_SHUTDOWN));
+                break;
+
+            case F_CHANNEL:
+                fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
+                return;
+
+            case F_READERR:
+                fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+                tcpsock_opmutex(~0);
+                return;
+
+            default:
+                fail_if(1, "Unhandled fuzz case");
+        }
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(tcpsock_recvfrom_large)
+{
+    int ret, len, i;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+    enum fuzz fuzzes[] = {
+        F_SUCCESS,
+        F_READERR,
+        F_CHANNEL,
+    };
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+
+    /* Read big data */
+    for (i = 0; i < 10; i++) {
+        len = sizeof(rbuf) + (rand() & 0xFF);
+        mocksrv_do_recv(len, 1, fuzzes[_i]);
+
+        // Read sizeof(rbuf) bytes
+        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+        switch (fuzzes[_i]) {
+            case F_SUCCESS:
+                fail_unless(ret == sizeof(rbuf), "Invalid size");
+                fail_unless(memcmp(rbuf, buf, ret) == 0, "Invalid data");
+                tcpsock_opmutex(~(T_GETSOCKNAME|T_RECVFROM|T_SENDTO));
+
+                // Read remaining bytes
+                ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+                fail_unless(ret == (len - sizeof(rbuf)), "Invalid size");
+                fail_unless(memcmp(rbuf, buf + sizeof(rbuf), ret) == 0, "Invalid data");
+
+                // Ensure no more data is pending
+                ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+                fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for data");
+                break;
+
+            case F_CHANNEL:
+                fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
+                return;
+
+            case F_READERR:
+                fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+                tcpsock_opmutex(~0);
+                return;
+
+            default:
+                fail_if(1, "Unhandled fuzz case");
+        }
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
+START_TEST(tcpsock_recvfrom_eof)
+{
+    int ret, len, i;
+    struct sockaddr_in sina, sinb;
+    socklen_t blen = sizeof(sinb);
+    char rbuf[1024];
+    enum fuzz fuzzes[] = {
+        F_SUCCESS,
+        F_ERROR,
+        F_READERR,
+        F_NO_PEER_ADDRESS,
+        F_NO_CHANNEL,
+        F_NO_CONNECT_STATUS,
+    };
+
+    sina.sin_family = AF_INET;
+    sina.sin_addr.s_addr = rand();
+    sina.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(F_SUCCESS);
+    ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
+    mocksrv_do_permit();
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
+
+    for (i = 0; i < 10; i++) {
+        len = sizeof(rbuf) + (rand() & 0xFF);
+        mocksrv_do_recv(len, 1, F_SUCCESS);
+        mocksrv_do_shut((struct sockaddr *) &sina, sizeof(sina), 1, fuzzes[_i]);
+
+        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+        fail_unless(ret == sizeof(rbuf), "Invalid size");
+        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+        fail_unless(ret == (len - sizeof(rbuf)), "Invalid size");
+
+        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+        switch (fuzzes[_i]) {
+            case F_SUCCESS:
+                fail_unless(ret == 0, "Not end of file");
+                tcpsock_opmutex(~(T_GETSOCKNAME|T_RECVFROM|T_SENDTO|T_SHUTDOWN|T_PERMIT));
+                return;
+
+            case F_ERROR:
+            case F_CHANNEL:
+            case F_NO_PEER_ADDRESS:
+            case F_NO_CHANNEL:
+            case F_NO_CONNECT_STATUS:
+                fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
+                break;
+
+            case F_READERR:
+                fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+                tcpsock_opmutex(~0);
+                return;
+
+            default:
+                fail_if(1, "Unhandled fuzz case");
+        }
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 Suite *
 check_turn()
 {
@@ -515,6 +840,10 @@ check_turn()
     tcase_add_test(test, tcpsock_getsockname);
     tcase_add_loop_test(test, tcpsock_listen, 0, 7);
     tcase_add_loop_test(test, tcpsock_permit, 0, 2);
+    tcase_add_loop_test(test, tcpsock_recvfrom_accept, 0, 6);
+    tcase_add_loop_test(test, tcpsock_recvfrom_small, 0, 3);
+    tcase_add_loop_test(test, tcpsock_recvfrom_large, 0, 3);
+    tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 6);
     suite_add_tcase(turn, test);
 
     return turn;
