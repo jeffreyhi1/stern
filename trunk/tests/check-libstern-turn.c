@@ -18,7 +18,7 @@
 
 turn_socket_t tsock;
 int srv, cli;
-struct sockaddr caddr;
+struct sockaddr caddr, raddr;
 socklen_t caddrlen = sizeof(caddr);
 unsigned int channel, length;
 char buf[1024];
@@ -175,13 +175,14 @@ mocktcpsrv_write_stun(char *buf, int channel, int len)
 static void
 mocksrv_do_bind(enum fuzz fuzz)
 {
-    struct sockaddr_in sin;
+    struct sockaddr_in *sin;
     struct stun_message *request, *response;
     int channel, len;
 
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = rand();
-    sin.sin_port = rand();
+    sin = (struct sockaddr_in *) &raddr;
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = rand();
+    sin->sin_port = rand();
 
     request = mocktcpsrv_read();
     fail_unless(request->message_type == TURN_ALLOCATION_REQUEST, "Bad request");
@@ -195,7 +196,7 @@ mocksrv_do_bind(enum fuzz fuzz)
     if (fuzz & F_XACT_ID)
         response->xact_id[5] ^= 0xff;
     if (!(fuzz & F_NO_RELAY_ADDRESS))
-        stun_set_relay_address(response, (struct sockaddr *) &sin, sizeof(sin));
+        stun_set_relay_address(response, &raddr, sizeof(struct sockaddr_in));
     if (!(fuzz & F_NO_XOR_MAPPED_ADDRESS))
         stun_set_xor_mapped_address(response, &caddr, caddrlen);
     if (!(fuzz & F_NO_BANDWIDTH))
@@ -332,6 +333,28 @@ START_TEST(tcpsock_bind)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(tcpsock_getsockname)
+{
+    int ret;
+    struct sockaddr addr;
+    struct sockaddr_in *sina = (struct sockaddr_in *) &addr;
+    struct sockaddr_in *sinb = (struct sockaddr_in *) &raddr;
+    socklen_t alen = sizeof(addr);
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_bind(tsock, NULL, 0);
+
+    ret = turn_getsockname(tsock, &addr, &alen);
+    fail_unless(ret == 0, "Getsockname failed");
+    fail_unless(addr.sa_family == AF_INET, "Bad family");
+    fail_unless(alen == sizeof(struct sockaddr_in), "Bad size");
+    fail_unless(sina->sin_addr.s_addr == sinb->sin_addr.s_addr, "Bad address");
+    fail_unless(sina->sin_port == sinb->sin_port, "Bad port");
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 START_TEST(tcpsock_listen)
 {
     int ret;
@@ -386,6 +409,7 @@ check_turn()
     tcase_add_checked_fixture(test, tcpsock_setup, tcpsock_teardown);
     tcase_add_test(test, tcpsock_init);
     tcase_add_loop_test(test, tcpsock_bind, 0, 8);
+    tcase_add_test(test, tcpsock_getsockname);
     tcase_add_loop_test(test, tcpsock_listen, 0, 4);
     suite_add_tcase(turn, test);
 

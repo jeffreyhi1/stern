@@ -388,7 +388,7 @@ turn_bind(turn_socket_t socket, struct sockaddr *addr, socklen_t len)
                 ABORT_SOCKET(turn, ECONNABORTED, -1);
             if (!response->relay_address || !response->xor_mapped_address)
                 ABORT_SOCKET(turn, ECONNABORTED, -1);
-            turn->addr_self = *response->relay_address;
+            memcpy(&turn->addr_self, response->relay_address, response->relay_address_len);
             turn->state = TS_BIND_DONE;
             stun_free(response);
             stun_free(turn->request);
