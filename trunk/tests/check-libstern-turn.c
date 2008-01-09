@@ -36,13 +36,15 @@ enum fuzz {
 };
 
 enum op {
-    T_INIT     = 1 << 0,
-    T_BIND     = 1 << 1,
-    T_LISTEN   = 1 << 2,
-    T_PERMIT   = 1 << 3,
-    T_CONNECT  = 1 << 4,
-    T_RECVFROM = 1 << 5,
-    T_SENDTO   = 1 << 6,
+    T_INIT        = 1 << 0,
+    T_BIND        = 1 << 1,
+    T_GETSOCKNAME = 1 << 2,
+    T_LISTEN      = 1 << 3,
+    T_PERMIT      = 1 << 4,
+    T_CONNECT     = 1 << 5,
+    T_RECVFROM    = 1 << 6,
+    T_SENDTO      = 1 << 7,
+    T_SHUTDOWN    = 1 << 8,
 };
 
 //------------------------------------------------------------------------------
@@ -59,6 +61,11 @@ tcpsock_opmutex(enum op op)
     if (op & T_BIND) {
         ret = turn_bind(tsock, NULL, 0);
         fail_unless(ret == -1 && errno == EINVAL, "Bind should not be allowed");
+    }
+
+    if (op & T_GETSOCKNAME) {
+        ret = turn_getsockname(tsock, NULL, 0);
+        fail_unless(ret == -1 && errno == EINVAL, "Getsockname should not be allowed");
     }
 
     if (op & T_LISTEN) {
@@ -86,6 +93,11 @@ tcpsock_opmutex(enum op op)
     if (op & T_SENDTO) {
         ret = turn_sendto(tsock, NULL, 0, NULL, 0);
         fail_unless(ret == -1 && errno == EINVAL, "Send should not be allowed");
+    }
+
+    if (op & T_SHUTDOWN) {
+        ret = turn_shutdown(tsock, NULL, 0);
+        fail_unless(ret == -1 && errno == EINVAL, "Shutdown should not be allowed");
     }
 
 }
@@ -294,7 +306,7 @@ START_TEST(tcpsock_bind)
     switch (fuzzes[_i]) {
         case F_SUCCESS:
             fail_unless(ret == 0, "Bind failed");
-            tcpsock_opmutex(~T_LISTEN);
+            tcpsock_opmutex(~(T_GETSOCKNAME|T_LISTEN));
             break;
 
         case F_XACT_ID:
@@ -336,14 +348,14 @@ START_TEST(tcpsock_listen)
 
     ret = turn_listen(tsock, 5);
     fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for response");
-    tcpsock_opmutex(~T_LISTEN);
+    tcpsock_opmutex(~(T_GETSOCKNAME|T_LISTEN));
 
     mocksrv_do_listen(fuzzes[_i]);
     ret = turn_listen(tsock, 5);
     switch (fuzzes[_i]) {
         case F_SUCCESS:
             fail_unless(ret == 0, "Listen failed");
-            tcpsock_opmutex(~(T_PERMIT|T_RECVFROM|T_SENDTO));
+            tcpsock_opmutex(~(T_GETSOCKNAME|T_PERMIT|T_RECVFROM|T_SENDTO));
             break;
 
         case F_XACT_ID:
