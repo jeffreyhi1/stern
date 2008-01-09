@@ -565,7 +565,7 @@ turn_recvfrom_connstat(struct turn_socket *turn, struct stun_message *stun,
 {
     struct channel *channel;
 
-    if (!stun->peer_address)
+    if (!stun->peer_address || stun->channel == -1 || stun->connect_status == -1)
         RETURN_ERROR(EAGAIN, -1);
 
     if ((channel = channel_by_num(turn, stun->channel)) == NULL) {
