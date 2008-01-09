@@ -665,6 +665,8 @@ START_TEST(tcpsock_recvfrom_accept)
         F_SUCCESS,
         F_ERROR,
         F_READERR_SHUT,
+        F_READERR_CORRUPTED,
+        F_CHANNEL,
         F_NO_PEER_ADDRESS,
         F_NO_CHANNEL,
         F_NO_CONNECT_STATUS,
@@ -694,6 +696,8 @@ START_TEST(tcpsock_recvfrom_accept)
         case F_NO_PEER_ADDRESS:
         case F_NO_CHANNEL:
         case F_NO_CONNECT_STATUS:
+        case F_CHANNEL:
+        case F_READERR_CORRUPTED:
             fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
             break;
 
@@ -839,6 +843,7 @@ START_TEST(tcpsock_recvfrom_eof)
         F_ERROR,
         F_READERR_SHUT,
         F_READERR_CORRUPTED,
+        F_CHANNEL,
         F_NO_PEER_ADDRESS,
         F_NO_CHANNEL,
         F_NO_CONNECT_STATUS,
@@ -1017,10 +1022,10 @@ check_turn()
     tcase_add_test(test, tcpsock_getsockname);
     tcase_add_loop_test(test, tcpsock_listen, 0, 7);
     tcase_add_loop_test(test, tcpsock_permit, 0, 2);
-    tcase_add_loop_test(test, tcpsock_recvfrom_accept, 0, 6);
+    tcase_add_loop_test(test, tcpsock_recvfrom_accept, 0, 8);
     tcase_add_loop_test(test, tcpsock_recvfrom_small, 0, 3);
     tcase_add_loop_test(test, tcpsock_recvfrom_large, 0, 3);
-    tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 7);
+    tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 8);
     tcase_add_loop_test(test, tcpsock_sendto_small, 0, 3);
     tcase_add_loop_test(test, tcpsock_shutdown, 0, 3);
     suite_add_tcase(turn, test);
