@@ -18,6 +18,7 @@
 
 struct sockaddr saddr;
 
+//------------------------------------------------------------------------------
 void
 check_address(struct sockaddr *addr)
 {
@@ -29,6 +30,38 @@ check_address(struct sockaddr *addr)
     fail_unless(ain->sin_addr.s_addr == sin->sin_addr.s_addr, "Bad address");
     fail_unless(ain->sin_port == sin->sin_port, "Bad port");
 }
+
+//------------------------------------------------------------------------------
+void
+init_sockaddr(struct sockaddr *addr, socklen_t len)
+{
+    struct sockaddr_in *sin = (struct sockaddr_in *) addr;
+
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = rand();
+    sin->sin_port = rand();
+}
+
+//------------------------------------------------------------------------------
+static void
+check_sockaddr(struct sockaddr *addr1, socklen_t alen1, struct sockaddr *addr2, socklen_t alen2)
+{
+    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
+    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
+    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
+    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
+
+    fail_unless(alen1 == alen2, "Bad length");
+    fail_unless(addr1->sa_family == addr2->sa_family, "Bad family");
+    if (addr1->sa_family == AF_INET) {
+        fail_unless(sina->sin_addr.s_addr == sinb->sin_addr.s_addr, "Bad address");
+        fail_unless(sina->sin_port == sinb->sin_port, "Bad port");
+    } else if (addr1->sa_family == AF_INET6) {
+        fail_unless(memcmp(sin6a->sin6_addr.s6_addr, sin6b->sin6_addr.s6_addr, 16) == 0, "Bad address");
+        fail_unless(sin6a->sin6_port == sin6b->sin6_port, "Bad port");
+    }
+}
+
 
 //------------------------------------------------------------------------------
 START_TEST(binding_ok)
@@ -52,6 +85,7 @@ START_TEST(binding_ok)
     check_address(response->mapped_address);
     check_address(response->xor_mapped_address);
 
+    stun_free(NULL);
     stun_free(request);
     stun_free(response);
 }
@@ -285,9 +319,9 @@ START_TEST(accessor_mapped_address)
     struct stun_message *stun = stun_new(1);
     struct sockaddr addr;
 
+    init_sockaddr(&addr, sizeof(addr));
     stun_set_mapped_address(stun, &addr, sizeof(addr));
-    fail_unless(stun->mapped_address_len == sizeof(addr), "Incorrect length");
-    fail_unless(memcmp(stun->mapped_address, &addr, sizeof(addr)) == 0, "Incorrect value");
+    check_sockaddr(stun->mapped_address, stun->mapped_address_len, &addr, sizeof(addr));
 
     stun_free(stun);
 }
@@ -299,9 +333,9 @@ START_TEST(accessor_xor_mapped_address)
     struct stun_message *stun = stun_new(1);
     struct sockaddr addr;
 
+    init_sockaddr(&addr, sizeof(addr));
     stun_set_xor_mapped_address(stun, &addr, sizeof(addr));
-    fail_unless(stun->xor_mapped_address_len == sizeof(addr), "Incorrect length");
-    fail_unless(memcmp(stun->xor_mapped_address, &addr, sizeof(addr)) == 0, "Incorrect value");
+    check_sockaddr(stun->xor_mapped_address, stun->xor_mapped_address_len, &addr, sizeof(addr));
 
     stun_free(stun);
 }
@@ -313,9 +347,9 @@ START_TEST(accessor_relay_address)
     struct stun_message *stun = stun_new(1);
     struct sockaddr addr;
 
+    init_sockaddr(&addr, sizeof(addr));
     stun_set_relay_address(stun, &addr, sizeof(addr));
-    fail_unless(stun->relay_address_len == sizeof(addr), "Incorrect length");
-    fail_unless(memcmp(stun->relay_address, &addr, sizeof(addr)) == 0, "Incorrect value");
+    check_sockaddr(stun->relay_address, stun->relay_address_len, &addr, sizeof(addr));
 
     stun_free(stun);
 }
@@ -327,9 +361,9 @@ START_TEST(accessor_peer_address)
     struct stun_message *stun = stun_new(1);
     struct sockaddr addr;
 
+    init_sockaddr(&addr, sizeof(addr));
     stun_set_peer_address(stun, &addr, sizeof(addr));
-    fail_unless(stun->peer_address_len == sizeof(addr), "Incorrect length");
-    fail_unless(memcmp(stun->peer_address, &addr, sizeof(addr)) == 0, "Incorrect value");
+    check_sockaddr(stun->peer_address, stun->peer_address_len, &addr, sizeof(addr));
 
     stun_free(stun);
 }

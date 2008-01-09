@@ -458,6 +458,7 @@ START_TEST(tcpsock_init)
 
     turn = turn_socket(PF_INET, SOCK_STREAM, 0);
     fail_if(turn == NULL, "Not initialized correctly");
+    memset(&saddr, 0, sizeof(saddr));
     saddr.sa_family = AF_LOCAL;
     fail_unless(turn_init(turn, &saddr, sizeof(saddr)) == -1,
                 "Accepted bad server address");
