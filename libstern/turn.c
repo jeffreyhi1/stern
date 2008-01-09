@@ -130,6 +130,9 @@ sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2)
     struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
     struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
 
+    if ((!addr1 && addr2) || (addr1 && !addr2))
+        return 0;
+
     return (addr1->sa_family == addr2->sa_family
             && ((addr1->sa_family == AF_INET
                  && sina->sin_addr.s_addr == sinb->sin_addr.s_addr
@@ -427,7 +430,7 @@ turn_listen(turn_socket_t socket, int limit)
     int channel;
 
     /* Check no operation is pending (except another listen) */
-    if (turn->op != TS_NONE && turn->op != TS_LISTEN)
+    if (turn->op != TS_NONE && turn->op != TS_BIND && turn->op != TS_LISTEN)
         RETURN_ERROR(EINVAL, -1);
 
     switch (turn->state) {
@@ -480,10 +483,15 @@ turn_permit(turn_socket_t socket, struct sockaddr *addr, socklen_t len)
     struct channel *channel;
 
     /* Check no operation is pending */
-    if (turn->op != TS_NONE)
+    if (turn->op != TS_NONE && turn->op != TS_LISTEN)
         RETURN_ERROR(EINVAL, -1);
 
     switch (turn->state) {
+        case TS_LISTEN_REQUESTED:
+            ret = turn_listen(socket, 0);
+            if (ret == -1) return -1;
+            // Fallthrough
+
         case TS_LISTEN_DONE:
             indication = stun_new(TURN_SEND_INDICATION);
             stun_set_peer_address(indication, addr, len);
