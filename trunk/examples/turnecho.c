@@ -48,11 +48,16 @@ int main(int argc, char **argv)
     sin = (struct sockaddr_in *) &peer;
     while (1) {
         ret = turn_recvfrom(sock, buf, 8192, &peer, &len);
-        if (ret == -1 && errno != EAGAIN)
+        if (ret == -1 && errno != EAGAIN) {
             error(-1, errno, "turn_recvfrom");
-        else if (ret == 0)
+        } else if (ret == -2) {
+            fprintf(stderr, "Accepted connection from %s port %d\n",
+                    inet_ntoa(sin->sin_addr), ntohs(sin->sin_port));
+        } else if (ret == 0) {
             turn_shutdown(sock, &peer, len);
-        else if (ret > 0) {
+            fprintf(stderr, "Closed connection from %s port %d\n",
+                    inet_ntoa(sin->sin_addr), ntohs(sin->sin_port));
+        } else if (ret > 0) {
             if (turn_sendto(sock, buf, ret, &peer, len) == -1)
                 error(-1, errno, "turn_sendto");
         }
