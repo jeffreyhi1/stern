@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #include <stern/stun.h>
 #include <stern/turn.h>

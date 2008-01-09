@@ -29,6 +29,9 @@ int
 turn_init(turn_socket_t socket, struct sockaddr *addr, socklen_t len);
 
 int
+turn_bind(turn_socket_t socket, struct sockaddr *addr, socklen_t len);
+
+int
 turn_connect(turn_socket_t socket, struct sockaddr *addr, socklen_t len);
 
 int
