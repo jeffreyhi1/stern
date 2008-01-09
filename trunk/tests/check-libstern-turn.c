@@ -319,7 +319,7 @@ START_TEST(tcpsock_bind)
 
     ret = turn_bind(tsock, NULL, 0);
     fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for response");
-    tcpsock_opmutex(~T_BIND);
+    tcpsock_opmutex(~(T_BIND|T_LISTEN));
 
     mocksrv_do_bind(fuzzes[_i]);
 
@@ -382,6 +382,7 @@ START_TEST(tcpsock_listen)
     int ret;
     enum fuzz fuzzes[] = {
         F_SUCCESS,
+        F_SUCCESS,
         F_ERROR,
         F_READERR,
         F_WRITEERR,
@@ -389,9 +390,20 @@ START_TEST(tcpsock_listen)
         F_CHANNEL,
     };
 
-    ret = turn_bind(tsock, NULL, 0);
-    mocksrv_do_bind(F_SUCCESS);
-    ret = turn_bind(tsock, NULL, 0);
+    switch (_i) {
+        case 1: // Listen without bind
+            ret = turn_listen(tsock, 5);
+            fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for response");
+            tcpsock_opmutex(~(T_BIND|T_LISTEN));
+            mocksrv_do_bind(F_SUCCESS);
+            break;
+
+        default: // Bind first
+            ret = turn_bind(tsock, NULL, 0);
+            mocksrv_do_bind(F_SUCCESS);
+            ret = turn_bind(tsock, NULL, 0);
+            break;
+    }
 
     if (fuzzes[_i] & F_WRITEERR) {
         shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
@@ -403,7 +415,7 @@ START_TEST(tcpsock_listen)
 
     ret = turn_listen(tsock, 5);
     fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for response");
-    tcpsock_opmutex(~(T_GETSOCKNAME|T_LISTEN));
+    tcpsock_opmutex(~(T_GETSOCKNAME|T_LISTEN|T_PERMIT));
 
     mocksrv_do_listen(fuzzes[_i]);
     ret = turn_listen(tsock, 5);
@@ -431,6 +443,46 @@ START_TEST(tcpsock_listen)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(tcpsock_permit)
+{
+    int ret;
+    struct sockaddr_in sin;
+    enum fuzz fuzzes[] = {
+        F_SUCCESS,
+        F_WRITEERR,
+    };
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = rand();
+    sin.sin_port = rand();
+
+    ret = turn_bind(tsock, NULL, 0);
+    mocksrv_do_bind(F_SUCCESS);
+    ret = turn_listen(tsock, 5);
+    mocksrv_do_listen(fuzzes[_i]);
+
+    if (fuzzes[_i] & F_WRITEERR) {
+        shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
+        ret = turn_permit(tsock, (struct sockaddr *) &sin, sizeof(sin));
+        fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+        tcpsock_opmutex(~0);
+        return;
+    }
+
+    ret = turn_permit(tsock, (struct sockaddr *) &sin, sizeof(sin));
+    switch (fuzzes[_i]) {
+        case F_SUCCESS:
+            fail_unless(ret == 0, "Permit failed");
+            tcpsock_opmutex(~(T_GETSOCKNAME|T_PERMIT|T_RECVFROM|T_SENDTO));
+            break;
+
+        default:
+            fail_if(1, "Unhandled fuzz case");
+    }
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 Suite *
 check_turn()
 {
@@ -444,7 +496,8 @@ check_turn()
     tcase_add_test(test, tcpsock_init);
     tcase_add_loop_test(test, tcpsock_bind, 0, 10);
     tcase_add_test(test, tcpsock_getsockname);
-    tcase_add_loop_test(test, tcpsock_listen, 0, 6);
+    tcase_add_loop_test(test, tcpsock_listen, 0, 7);
+    tcase_add_loop_test(test, tcpsock_permit, 0, 2);
     suite_add_tcase(turn, test);
 
     return turn;
