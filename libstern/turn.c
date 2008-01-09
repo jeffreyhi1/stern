@@ -390,12 +390,18 @@ turn_bind(turn_socket_t socket, struct sockaddr *addr, socklen_t len)
                 RETURN_ERROR(EAGAIN, -1);
             slen = ret;
             response = stun_from_bytes(buf, &slen);
-            if (!stun_xid_matches(response, turn->request))
+            if (!stun_xid_matches(response, turn->request)) {
+                stun_free(response);
                 RETURN_ERROR(EAGAIN, -1);
-            if (!stun_is_ok_response(response, turn->request))
+            }
+            if (!stun_is_ok_response(response, turn->request)) {
+                stun_free(response);
                 ABORT_SOCKET(turn, ECONNABORTED, -1);
-            if (!response->relay_address || !response->xor_mapped_address)
+            }
+            if (!response->relay_address || !response->xor_mapped_address) {
+                stun_free(response);
                 ABORT_SOCKET(turn, ECONNABORTED, -1);
+            }
             memcpy(&turn->addr_self, response->relay_address, response->relay_address_len);
             turn->state = TS_BIND_DONE;
             stun_free(response);
@@ -459,10 +465,14 @@ turn_listen(turn_socket_t socket, int limit)
                 RETURN_ERROR(EAGAIN, -1);
             slen = ret;
             response = stun_from_bytes(buf, &slen);
-            if (!stun_xid_matches(response, turn->request))
+            if (!stun_xid_matches(response, turn->request)) {
+                stun_free(response);
                 RETURN_ERROR(EAGAIN, -1);
-            if (!stun_is_ok_response(response, turn->request))
+            }
+            if (!stun_is_ok_response(response, turn->request)) {
+                stun_free(response);
                 ABORT_SOCKET(turn, ECONNABORTED, -1);
+            }
             turn->state = TS_LISTEN_DONE;
             stun_free(response);
             stun_free(turn->request);

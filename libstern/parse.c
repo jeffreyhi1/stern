@@ -1219,6 +1219,8 @@ stun_free(struct stun_message *stun)
 {
     int i;
 
+    if (!stun)
+        return;
     if (stun->error_reason)
         s_free(stun->error_reason);
     if (stun->username)
