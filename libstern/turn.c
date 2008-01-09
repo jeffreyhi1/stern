@@ -84,7 +84,7 @@ channel_find_unused(struct turn_socket *turn)
             chan = rand() & 0xFFFF;
         } while (chan == 0);
         if (--tries == 0)
-            assert(0);
+            return -1;
         for (i = 0; i < turn->nchannels; i++)
             if (turn->channels[i].num_self == chan)
                 break;
@@ -111,6 +111,8 @@ channel_new(struct turn_socket *turn, struct sockaddr *addr, socklen_t len)
     int chan;
 
     chan = channel_find_unused(turn);
+    if (chan == -1)
+        return NULL;
     turn->channels = (struct channel *) s_realloc(
             turn->channels,
             (++turn->nchannels) * sizeof(struct channel));
@@ -181,13 +183,11 @@ is_sockerr(struct turn_socket *turn, int ret, int err, int op_success, int op_pr
                              || err == EAGAIN)) {
         turn->op = op_progress;
         return -1;
-    } else if (ret == -1) {
+    } else {
         turn->op = TS_NONE;
         turn->state = TS_CLOSED;
         return -1;
     }
-    /* unreachable */
-    assert(0);
 }
 
 //------------------------------------------------------------------------------
@@ -496,9 +496,10 @@ turn_permit(turn_socket_t socket, struct sockaddr *addr, socklen_t len)
             // Fallthrough
 
         case TS_LISTEN_DONE:
+            if ((channel = channel_new(turn, addr, len)) == NULL)
+                RETURN_ERROR(ENOMEM, -1);
             indication = stun_new(TURN_SEND_INDICATION);
             stun_set_peer_address(indication, addr, len);
-            channel = channel_new(turn, addr, len);
             indication->channel = channel->num_self;
             slen = stun_to_bytes(buf, sizeof(buf), indication);
             ret = send_to_server(turn, buf, slen, TURN_CHANNEL_CTRL);
@@ -574,6 +575,8 @@ turn_recvfrom_connstat(struct turn_socket *turn, struct stun_message *stun,
     if ((channel = channel_by_num(turn, stun->channel)) == NULL) {
         channel = channel_new(turn, stun->peer_address,
                               stun->peer_address_len);
+        if (!channel)
+            RETURN_ERROR(EAGAIN, -1);
         channel->num_peer = stun->channel;
         channel->self_confirm = 1;
     }
@@ -705,7 +708,8 @@ turn_sendto(turn_socket_t socket, char *buf, size_t len,
                 if (turn->protocol == IPPROTO_TCP)
                     RETURN_ERROR(EINVAL, -1);
                 else
-                    channel = channel_new(turn, addr, alen);
+                    if ((channel = channel_new(turn, addr, alen)) == NULL)
+                        RETURN_ERROR(ENOMEM, -1);
             }
             if (!channel->peer_confirm)
                 return turn_sendto_stun(turn, buf, len, channel);

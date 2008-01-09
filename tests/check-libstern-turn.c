@@ -28,18 +28,19 @@ char buf[8192];
 enum fuzz {
     F_SUCCESS               = 0,
     F_ERROR                 = 1 << 0,
-    F_READERR               = 1 << 1,
-    F_READERR_UNALIGNED     = 1 << 2,
-    F_WRITEERR              = 1 << 3,
-    F_XACT_ID               = 1 << 4,
-    F_CHANNEL               = 1 << 5,
-    F_NO_PEER_ADDRESS       = 1 << 6,
-    F_NO_XOR_MAPPED_ADDRESS = 1 << 7,
-    F_NO_BANDWIDTH          = 1 << 8,
-    F_NO_LIFETIME           = 1 << 9,
-    F_NO_RELAY_ADDRESS      = 1 << 10,
-    F_NO_CHANNEL            = 1 << 11,
-    F_NO_CONNECT_STATUS     = 1 << 12,
+    F_READERR_SHUT          = 1 << 1,
+    F_READERR_INTERRUPTED   = 1 << 2,
+    F_READERR_CORRUPTED     = 1 << 3,
+    F_WRITEERR              = 1 << 4,
+    F_XACT_ID               = 1 << 5,
+    F_CHANNEL               = 1 << 6,
+    F_NO_PEER_ADDRESS       = 1 << 7,
+    F_NO_XOR_MAPPED_ADDRESS = 1 << 8,
+    F_NO_BANDWIDTH          = 1 << 9,
+    F_NO_LIFETIME           = 1 << 10,
+    F_NO_RELAY_ADDRESS      = 1 << 11,
+    F_NO_CHANNEL            = 1 << 12,
+    F_NO_CONNECT_STATUS     = 1 << 13,
 };
 
 enum op {
@@ -190,7 +191,7 @@ mocktcpsrv_read()
 
 //------------------------------------------------------------------------------
 static void
-mocktcpsrv_write(char *buf, int channel, int len)
+mocktcpsrv_write(char *buf, int channel, int len, enum fuzz fuzz)
 {
     uint16_t val1, val2;
 
@@ -198,7 +199,10 @@ mocktcpsrv_write(char *buf, int channel, int len)
     val2 = htons(len);
     fail_if(send(cli, &val1, sizeof(val1), MSG_MORE) != 2, "Invalid write");
     fail_if(send(cli, &val2, sizeof(val2), MSG_MORE) != 2, "Invalid write");
-    fail_if(send(cli, buf, len, 0) != len, "Invalid write");
+    if (!(fuzz & F_READERR_INTERRUPTED))
+        fail_if(send(cli, buf, len, 0) != len, "Invalid write");
+    else
+        close(cli);
 }
 
 //------------------------------------------------------------------------------
@@ -239,9 +243,11 @@ mocksrv_do_bind(enum fuzz fuzz)
     else
         channel = 42;
 
-    if (!(fuzz & F_READERR)) {
+    if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write(buf, channel, len);
+        if (fuzz & F_READERR_CORRUPTED)
+            buf[4] = 0x00;
+        mocktcpsrv_write(buf, channel, len, fuzz);
     } else {
         close(cli);
     }
@@ -293,9 +299,11 @@ mocksrv_do_listen(enum fuzz fuzz)
     else
         channel = 42;
 
-    if (!(fuzz & F_READERR)) {
+    if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write(buf, channel, len);
+        if (fuzz & F_READERR_CORRUPTED)
+            buf[4] = 0x00;
+        mocktcpsrv_write(buf, channel, len, fuzz);
     } else {
         close(cli);
     }
@@ -326,9 +334,11 @@ mocksrv_do_accept(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
     else
         channel = 42;
 
-    if (!(fuzz & F_READERR)) {
+    if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write(buf, channel, len);
+        if (fuzz & F_READERR_CORRUPTED)
+            buf[4] = 0x00;
+        mocktcpsrv_write(buf, channel, len, fuzz);
     } else {
         close(cli);
     }
@@ -349,8 +359,8 @@ mocksrv_do_recv(size_t len, int chan, enum fuzz fuzz)
     else
         channel = 42;
 
-    if (!(fuzz & F_READERR)) {
-        mocktcpsrv_write(buf, channel, len);
+    if (!(fuzz & F_READERR_SHUT)) {
+        mocktcpsrv_write(buf, channel, len, fuzz);
     } else {
         close(cli);
     }
@@ -379,9 +389,11 @@ mocksrv_do_shut(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
     else
         channel = 42;
 
-    if (!(fuzz & F_READERR)) {
+    if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
-        mocktcpsrv_write(buf, channel, len);
+        if (fuzz & F_READERR_CORRUPTED)
+            buf[4] = 0x00;
+        mocktcpsrv_write(buf, channel, len, fuzz);
     } else {
         close(cli);
     }
@@ -460,7 +472,8 @@ START_TEST(tcpsock_bind)
     enum fuzz fuzzes[] = {
         F_SUCCESS,
         F_ERROR,
-        F_READERR,
+        F_READERR_SHUT,
+        F_READERR_INTERRUPTED,
         F_WRITEERR,
         F_XACT_ID,
         F_NO_RELAY_ADDRESS,
@@ -497,7 +510,8 @@ START_TEST(tcpsock_bind)
             break;
 
         case F_ERROR:
-        case F_READERR:
+        case F_READERR_SHUT:
+        case F_READERR_INTERRUPTED:
         case F_NO_RELAY_ADDRESS:
         case F_NO_XOR_MAPPED_ADDRESS:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
@@ -540,7 +554,7 @@ START_TEST(tcpsock_listen)
         F_SUCCESS,
         F_SUCCESS,
         F_ERROR,
-        F_READERR,
+        F_READERR_SHUT,
         F_WRITEERR,
         F_XACT_ID,
         F_CHANNEL,
@@ -587,7 +601,7 @@ START_TEST(tcpsock_listen)
             break;
 
         case F_ERROR:
-        case F_READERR:
+        case F_READERR_SHUT:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
             tcpsock_opmutex(~0);
             break;
@@ -649,7 +663,7 @@ START_TEST(tcpsock_recvfrom_accept)
     enum fuzz fuzzes[] = {
         F_SUCCESS,
         F_ERROR,
-        F_READERR,
+        F_READERR_SHUT,
         F_NO_PEER_ADDRESS,
         F_NO_CHANNEL,
         F_NO_CONNECT_STATUS,
@@ -682,7 +696,7 @@ START_TEST(tcpsock_recvfrom_accept)
             fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
             break;
 
-        case F_READERR:
+        case F_READERR_SHUT:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting retry request");
             break;
 
@@ -701,7 +715,7 @@ START_TEST(tcpsock_recvfrom_small)
     char rbuf[1024];
     enum fuzz fuzzes[] = {
         F_SUCCESS,
-        F_READERR,
+        F_READERR_SHUT,
         F_CHANNEL,
     };
 
@@ -735,7 +749,7 @@ START_TEST(tcpsock_recvfrom_small)
                 fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
                 return;
 
-            case F_READERR:
+            case F_READERR_SHUT:
                 fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
                 tcpsock_opmutex(~0);
                 return;
@@ -756,7 +770,7 @@ START_TEST(tcpsock_recvfrom_large)
     char rbuf[1024];
     enum fuzz fuzzes[] = {
         F_SUCCESS,
-        F_READERR,
+        F_READERR_SHUT,
         F_CHANNEL,
     };
 
@@ -800,7 +814,7 @@ START_TEST(tcpsock_recvfrom_large)
                 fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
                 return;
 
-            case F_READERR:
+            case F_READERR_SHUT:
                 fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
                 tcpsock_opmutex(~0);
                 return;
@@ -822,7 +836,8 @@ START_TEST(tcpsock_recvfrom_eof)
     enum fuzz fuzzes[] = {
         F_SUCCESS,
         F_ERROR,
-        F_READERR,
+        F_READERR_SHUT,
+        F_READERR_CORRUPTED,
         F_NO_PEER_ADDRESS,
         F_NO_CHANNEL,
         F_NO_CONNECT_STATUS,
@@ -863,10 +878,11 @@ START_TEST(tcpsock_recvfrom_eof)
             case F_NO_PEER_ADDRESS:
             case F_NO_CHANNEL:
             case F_NO_CONNECT_STATUS:
+            case F_READERR_CORRUPTED:
                 fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
                 break;
 
-            case F_READERR:
+            case F_READERR_SHUT:
                 fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
                 tcpsock_opmutex(~0);
                 return;
@@ -938,10 +954,9 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(tcpsock_shutdown)
 {
-    int ret, len, i, j, chan;
+    int ret;
     struct sockaddr_in sina, sinb;
     socklen_t blen = sizeof(sinb);
-    char rbuf[1024];
 
     sina.sin_family = AF_INET;
     sina.sin_addr.s_addr = rand();
@@ -997,14 +1012,14 @@ check_turn()
     test = tcase_create("tcp_socket");
     tcase_add_checked_fixture(test, tcpsock_setup, tcpsock_teardown);
     tcase_add_test(test, tcpsock_init);
-    tcase_add_loop_test(test, tcpsock_bind, 0, 10);
+    tcase_add_loop_test(test, tcpsock_bind, 0, 11);
     tcase_add_test(test, tcpsock_getsockname);
     tcase_add_loop_test(test, tcpsock_listen, 0, 7);
     tcase_add_loop_test(test, tcpsock_permit, 0, 2);
     tcase_add_loop_test(test, tcpsock_recvfrom_accept, 0, 6);
     tcase_add_loop_test(test, tcpsock_recvfrom_small, 0, 3);
     tcase_add_loop_test(test, tcpsock_recvfrom_large, 0, 3);
-    tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 6);
+    tcase_add_loop_test(test, tcpsock_recvfrom_eof, 0, 7);
     tcase_add_loop_test(test, tcpsock_sendto_small, 0, 3);
     tcase_add_loop_test(test, tcpsock_shutdown, 0, 3);
     suite_add_tcase(turn, test);
