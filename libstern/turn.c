@@ -406,7 +406,7 @@ turn_getsockname(turn_socket_t socket, struct sockaddr *addr, socklen_t *len)
 {
     struct turn_socket *turn = FROM_TS(socket);
 
-    if (turn->state < TS_BIND_DONE)
+    if (turn->state < TS_BIND_DONE || turn->state >= TS_CLOSED)
         RETURN_ERROR(EINVAL, -1);
 
     memcpy(addr, &turn->addr_self, *len);
