@@ -310,7 +310,7 @@ START_TEST(tcpsock_bind)
     };
 
     if (fuzzes[_i] & F_WRITEERR) {
-        close(cli);
+        shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
         ret = turn_bind(tsock, NULL, 0);
         fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
         tcpsock_opmutex(~0);
@@ -394,7 +394,7 @@ START_TEST(tcpsock_listen)
     ret = turn_bind(tsock, NULL, 0);
 
     if (fuzzes[_i] & F_WRITEERR) {
-        close(cli);
+        shutdown(turn_get_selectable_fd(tsock), SHUT_WR);
         ret = turn_listen(tsock, 5);
         fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
         tcpsock_opmutex(~0);

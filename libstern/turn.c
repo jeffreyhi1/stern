@@ -225,8 +225,10 @@ send_to_server(struct turn_socket *turn, char *buf, size_t len, int channel)
     msg.msg_iovlen = 2;
 
     /* Send full frames only */
-    ret = sendmsg(turn->sock, &msg, 0);
-    if (ret != len + TURN_TAGLEN)
+    ret = sendmsg(turn->sock, &msg, MSG_NOSIGNAL);
+    if (ret == -1 && errno != EAGAIN)
+        return -1;
+    else if (ret != len + TURN_TAGLEN)
         RETURN_ERROR(EMSGSIZE, -1);
     return 0;
 }
@@ -756,4 +758,15 @@ turn_set_nonblocking(turn_socket_t socket)
         || fcntl(turn->sock, F_SETFL, flags | O_NONBLOCK) == -1)
         return -1;
     return 0;
+}
+
+//------------------------------------------------------------------------------
+int
+turn_get_selectable_fd(turn_socket_t socket)
+{
+    struct turn_socket *turn = FROM_TS(socket);
+
+    if (turn->state >= TS_CLOSED)
+        RETURN_ERROR(EINVAL, -1);
+    return turn->sock;
 }
