@@ -26,13 +26,14 @@ char buf[1024];
 enum fuzz {
     F_SUCCESS               = 0,
     F_ERROR                 = 1 << 0,
-    F_XACT_ID               = 1 << 1,
-    F_CHANNEL               = 1 << 2,
-    F_NO_PEER_ADDRESS       = 1 << 3,
-    F_NO_XOR_MAPPED_ADDRESS = 1 << 4,
-    F_NO_BANDWIDTH          = 1 << 5,
-    F_NO_LIFETIME           = 1 << 6,
-    F_NO_RELAY_ADDRESS      = 1 << 7,
+    F_NO_RESPONSE           = 1 << 1,
+    F_XACT_ID               = 1 << 2,
+    F_CHANNEL               = 1 << 3,
+    F_NO_PEER_ADDRESS       = 1 << 4,
+    F_NO_XOR_MAPPED_ADDRESS = 1 << 5,
+    F_NO_BANDWIDTH          = 1 << 6,
+    F_NO_LIFETIME           = 1 << 7,
+    F_NO_RELAY_ADDRESS      = 1 << 8,
 };
 
 enum op {
@@ -209,8 +210,12 @@ mocksrv_do_bind(enum fuzz fuzz)
     else
         channel = TURN_CHANNEL_CTRL;
 
-    len = stun_to_bytes(buf, sizeof(buf), response);
-    mocktcpsrv_write_stun(buf, channel, len);
+    if (!(fuzz & F_NO_RESPONSE)) {
+        len = stun_to_bytes(buf, sizeof(buf), response);
+        mocktcpsrv_write_stun(buf, channel, len);
+    } else {
+        close(cli);
+    }
     stun_free(request);
     stun_free(response);
 }
@@ -245,8 +250,12 @@ mocksrv_do_listen(enum fuzz fuzz)
     else
         channel = TURN_CHANNEL_CTRL;
 
-    len = stun_to_bytes(buf, sizeof(buf), response);
-    mocktcpsrv_write_stun(buf, channel, len);
+    if (!(fuzz & F_NO_RESPONSE)) {
+        len = stun_to_bytes(buf, sizeof(buf), response);
+        mocktcpsrv_write_stun(buf, channel, len);
+    } else {
+        close(cli);
+    }
     stun_free(request);
     stun_free(response);
 }
@@ -289,6 +298,7 @@ START_TEST(tcpsock_bind)
     enum fuzz fuzzes[] = {
         F_SUCCESS,
         F_ERROR,
+        F_NO_RESPONSE,
         F_XACT_ID,
         F_NO_RELAY_ADDRESS,
         F_NO_XOR_MAPPED_ADDRESS,
@@ -316,9 +326,11 @@ START_TEST(tcpsock_bind)
             break;
 
         case F_ERROR:
+        case F_NO_RESPONSE:
         case F_NO_RELAY_ADDRESS:
         case F_NO_XOR_MAPPED_ADDRESS:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+            tcpsock_opmutex(~0);
             break;
 
         case F_NO_BANDWIDTH:
@@ -347,7 +359,7 @@ START_TEST(tcpsock_getsockname)
 
     ret = turn_getsockname(tsock, &addr, &alen);
     fail_unless(ret == 0, "Getsockname failed");
-    fail_unless(addr.sa_family == AF_INET, "Bad family");
+    fail_unless(addr.sa_family == raddr.sa_family, "Bad family");
     fail_unless(alen == sizeof(struct sockaddr_in), "Bad size");
     fail_unless(sina->sin_addr.s_addr == sinb->sin_addr.s_addr, "Bad address");
     fail_unless(sina->sin_port == sinb->sin_port, "Bad port");
@@ -361,6 +373,7 @@ START_TEST(tcpsock_listen)
     enum fuzz fuzzes[] = {
         F_SUCCESS,
         F_ERROR,
+        F_NO_RESPONSE,
         F_XACT_ID,
         F_CHANNEL,
     };
@@ -387,7 +400,9 @@ START_TEST(tcpsock_listen)
             break;
 
         case F_ERROR:
+        case F_NO_RESPONSE:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
+            tcpsock_opmutex(~0);
             break;
 
         default:
@@ -408,9 +423,9 @@ check_turn()
     test = tcase_create("tcp_socket");
     tcase_add_checked_fixture(test, tcpsock_setup, tcpsock_teardown);
     tcase_add_test(test, tcpsock_init);
-    tcase_add_loop_test(test, tcpsock_bind, 0, 8);
+    tcase_add_loop_test(test, tcpsock_bind, 0, 9);
     tcase_add_test(test, tcpsock_getsockname);
-    tcase_add_loop_test(test, tcpsock_listen, 0, 4);
+    tcase_add_loop_test(test, tcpsock_listen, 0, 5);
     suite_add_tcase(turn, test);
 
     return turn;
