@@ -143,8 +143,7 @@ START_TEST(binding_notreq)
     fail_if(stun_is_err_response(response, request), "Response considered error");
 
     stun_free(request);
-    if (response)
-        stun_free(response);
+    stun_free(response);
 }
 END_TEST
 
