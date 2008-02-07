@@ -259,13 +259,15 @@ sternd_stun_quit()
     }
 
     if (sternd.stuntcp.sock != -1) {
-        close(sternd.stuntcp.sock);
         event_del(&sternd.stuntcp.s.tcp.ev_accept);
+        close(sternd.stuntcp.sock);
+        sternd.stuntcp.sock = -1;
     }
 
     if (sternd.stunudp.sock != -1) {
+        event_del(&sternd.stunudp.s.udp.ev_recv);
         close(sternd.stunudp.sock);
-        event_del(&sternd.stuntcp.s.udp.ev_recv);
+        sternd.stunudp.sock = -1;
     }
 }
 

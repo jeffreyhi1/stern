@@ -94,6 +94,8 @@ static void
 stunudp_teardown()
 {
     sternd_quit();
+    close(srv);
+    close(cli);
 }
 
 //------------------------------------------------------------------------------
@@ -137,6 +139,8 @@ static void
 stuntcp_teardown()
 {
     sternd_quit();
+    close(srv);
+    close(cli);
 }
 
 //------------------------------------------------------------------------------
