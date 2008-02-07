@@ -192,8 +192,6 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(stuntcp_close)
 {
-    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
-
     shutdown(cli, SHUT_WR);
     srv_loop();
     fail_unless(LIST_FIRST(&sternd.stuntcp.clients) == NULL, "Client not reaped");
@@ -204,8 +202,6 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(stuntcp_timeo)
 {
-    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
-
     usleep(200000);
     srv_loop();
     fail_unless(LIST_FIRST(&sternd.stuntcp.clients) == NULL, "Client not reaped");
