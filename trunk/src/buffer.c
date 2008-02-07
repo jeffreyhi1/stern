@@ -75,7 +75,7 @@ b_recv(struct buffer *buf, int fd, size_t max, int flags)
 ssize_t
 b_send(struct buffer *buf, int fd, int flags)
 {
-    ssize_t ret, len = 0;
+    ssize_t ret = 0, len = 0;
 
     while (b_num_avail(buf)) {
         ret = send(fd, b_pos_avail(buf), b_num_avail(buf), flags);
