@@ -21,7 +21,8 @@ check_libstern_coverage_SOURCES = $(check_libstern_SOURCES) \
 check_libstern_coverage_CFLAGS = $(COV_CFLAGS)
 
 check_sternd_SOURCES = check-sternd.c \
-					   check-sternd-stund.c
+					   check-sternd-stund.c \
+					   check-sternd-turnd.c
 check_sternd_LDADD = ../sternd/libsternd.la \
 					 ../libstern/libstern.la
 

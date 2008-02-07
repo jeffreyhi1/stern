@@ -19,7 +19,7 @@
 int srv, cli;
 
 //------------------------------------------------------------------------------
-void
+static void
 check_address(struct sockaddr *addr1, struct sockaddr *addr2)
 {
     struct sockaddr_in *ain = (struct sockaddr_in *) addr1;

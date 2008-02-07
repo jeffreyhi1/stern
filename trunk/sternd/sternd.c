@@ -24,15 +24,25 @@ sternd_init()
 {
     static int initialized = 0;
 
-    if (!initialized) {
-        event_init();
-    }
+    if (initialized)
+        return;
 
     memset(&sternd, 0, sizeof(sternd));
     sternd.stuntcp.sock = -1;
     sternd.stunudp.sock = -1;
     LIST_INIT(&sternd.stuntcp.clients);
     LIST_INIT(&sternd.stunudp.clients);
+    sternd.stuntcp.sternd = &sternd;
+    sternd.stunudp.sternd = &sternd;
+    sternd.stuntcp.protocol = IPPROTO_TCP;
+    sternd.stunudp.protocol = IPPROTO_UDP;
+
+    sternd.turntcp.sock = -1;
+    LIST_INIT(&sternd.turntcp.clients);
+    sternd.turntcp.sternd = &sternd;
+    sternd.turntcp.protocol = IPPROTO_TCP;
+
+    sternd.base = event_init();
 
     initialized = 1;
 }
@@ -41,7 +51,7 @@ sternd_init()
 void
 sternd_dispatch()
 {
-    event_dispatch();
+    event_base_dispatch(sternd.base);
 }
 
 //------------------------------------------------------------------------------
@@ -52,8 +62,8 @@ sternd_loop()
     struct timeval tv = {0, 10000};
 
     for (i = 0; i < 5; i++) {
-        event_loopexit(&tv);
-        event_loop(EVLOOP_NONBLOCK);
+        event_base_loopexit(sternd.base, &tv);
+        event_base_loop(sternd.base, EVLOOP_NONBLOCK);
     }
 }
 
@@ -62,5 +72,6 @@ void
 sternd_quit()
 {
     sternd_stun_quit();
+    sternd_turn_quit();
     sternd_init();
 }

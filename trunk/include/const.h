@@ -93,6 +93,8 @@
 #define IS_SUCCESS_RESP(msg_type) (((msg_type) & 0x0110) == 0x0100)
 #define IS_ERR_RESP(msg_type)     (((msg_type) & 0x0110) == 0x0110)
 
+#define IS_STUN_CHANNEL(chan)     (!(chan & 0xc000))
+
 #define PORT_STUN                 3478
 #define PORT_TURN                 8778
 

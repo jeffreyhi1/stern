@@ -18,6 +18,7 @@
 #define __COMMON_H
 
 #include <sys/types.h>
+#include <arpa/inet.h>
 
 #define BUFFER_MIN     256
 #define BUFFER_MAX     8192
@@ -46,5 +47,8 @@ void b_shrink(struct buffer *buf);
 #define b_used_free(buf, num)     do { (buf)->len += (num); } while(0)
 ssize_t b_recv(struct buffer *buf, int fd, size_t max, int flags);
 ssize_t b_send(struct buffer *buf, int fd, int flags);
+
+int sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2);
+int sockaddr_matches_addr(struct sockaddr *addr1, struct sockaddr *addr2);
 
 #endif

@@ -16,6 +16,8 @@
  */
 #include "libstern.h"
 
+#define STUN_HLEN                 20
+
 #define TO_TS(x)            ((turn_socket_t) (x))
 #define FROM_TS(x)          ((struct turn_socket *) (x))
 #define RETURN_ERROR(x,y)   do { errno = (x); return (y); } while(0)
@@ -64,19 +66,20 @@ struct channel {
 };
 
 struct turn_socket {
-    enum turn_socket_operation  op;                    /* Active operation                 */
-    enum turn_socket_state      state;                 /* Socket state                     */
-    int                         family     , protocol; /* Application / peer socket type   */
-    int                         nchannels;             /* Number of channels               */
-    int                         sock;                  /* Socket to turn server. TCP only. */
-    int                         last_channel;          /* Channel of last frame read       */
-    size_t                      last_len;              /* Length of last frame read        */
-    struct channel             *channels;              /* Channels                         */
-    struct sockaddr             addr_self;             /* Relay address                    */
-    struct stun_message        *request;               /* Last request                     */
-    struct buffer               rbuf;                  /* Buffer for incoming network data */
-    struct buffer               wbuf;                  /* Buffer for outgoing network data */
-    size_t                      pos;                   /* Bytes copied to user             */
+    enum turn_socket_operation  op;                    /* Active operation                       */
+    enum turn_socket_state      state;                 /* Socket state                           */
+    int                         family     , protocol; /* Application / peer socket type         */
+    int                         nchannels;             /* Number of channels                     */
+    int                         sock;                  /* Socket to turn server. TCP only.       */
+    int                         last_channel;          /* Channel of last frame read             */
+    size_t                      last_framelen;         /* Length of last frame read (incl. hdrs) */
+    size_t                      last_rawlen;           /* Length of last raw frame payload       */
+    struct channel             *channels;              /* Channels                               */
+    struct sockaddr             addr_self;             /* Relay address                          */
+    struct stun_message        *request;               /* Last request                           */
+    struct buffer               rbuf;                  /* Buffer for incoming network data       */
+    struct buffer               wbuf;                  /* Buffer for outgoing network data       */
+    size_t                      pos;                   /* Bytes copied to user                   */
 };
 
 //------------------------------------------------------------------------------
@@ -86,9 +89,8 @@ channel_find_unused(struct turn_socket *turn)
     int chan, i, tries = 10;
 
     do {
-        do {
-            chan = rand() & 0xFFFF;
-        } while (chan == 0);
+        chan = rand() & 0xFFFF;
+        chan |= ((rand() + 1) & 0x3) << 14;
         if (--tries == 0)
             return -1;
         for (i = 0; i < turn->nchannels; i++)
@@ -128,33 +130,6 @@ channel_new(struct turn_socket *turn, struct sockaddr *addr, socklen_t len)
     channel->addrlen = sizeof(channel->addr);
     copy_sockaddr(&channel->addr, &channel->addrlen, addr, len);
     return channel;
-}
-
-//------------------------------------------------------------------------------
-static int
-sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2)
-{
-    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
-    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
-    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
-    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
-
-    if (addr1 && addr2 && addr1->sa_family == addr2->sa_family) {
-        switch (addr1->sa_family) {
-            case AF_INET:
-                if (sina->sin_addr.s_addr == sinb->sin_addr.s_addr
-                    && sina->sin_port == sinb->sin_port)
-                    return 1;
-                break;
-
-            case AF_INET6:
-                if (memcmp(sin6a->sin6_addr.s6_addr, sin6b->sin6_addr.s6_addr, 16) != 0)
-                    break;
-                if (sin6a->sin6_port == sin6b->sin6_port)
-                    return 1;
-            }
-    }
-    return 0;
 }
 
 //------------------------------------------------------------------------------
@@ -241,17 +216,12 @@ queue_stun_frame(struct turn_socket *turn, struct stun_message *stun)
     struct buffer *wbuf = &turn->wbuf;
 
     while (1) {
-        if (b_num_free(wbuf) < TURN_TAGLEN || ret < 0)
-            b_grow(wbuf);
-        tag = (struct tag *) b_pos_free(wbuf);
-        ret = stun_to_bytes(b_pos_free(wbuf) + TURN_TAGLEN,
-                            b_num_free(wbuf) - TURN_TAGLEN, stun);
+        ret = stun_to_bytes(b_pos_free(wbuf), b_num_free(wbuf), stun);
         if (ret > 0) {
-            tag->length = htons(ret);
-            tag->channel = htons(TURN_CHANNEL_CTRL);
-            b_used_free(wbuf, ret + TURN_TAGLEN);
+            b_used_free(wbuf, ret);
             break;
         }
+        b_grow(wbuf);
     }
 }
 
@@ -274,8 +244,8 @@ recv_frame(struct turn_socket *turn)
         len = b_num_avail(rbuf);
         if (len < TURN_TAGLEN)
             ret = b_recv(rbuf, turn->sock, TURN_TAGLEN - len, 0);
-        else if (b_num_avail(rbuf) < turn->last_len + TURN_TAGLEN)
-            ret = b_recv(rbuf, turn->sock, turn->last_len + TURN_TAGLEN - len, 0);
+        else if (b_num_avail(rbuf) < turn->last_framelen)
+            ret = b_recv(rbuf, turn->sock, turn->last_framelen - len, 0);
         else
             break;
 
@@ -283,11 +253,17 @@ recv_frame(struct turn_socket *turn)
         else if (ret < 0) return ret;
         if (b_num_avail(rbuf) == TURN_TAGLEN) {
             tag = (struct tag *) b_pos_avail(rbuf);
-            turn->last_len = ntohs(tag->length);
+            if (IS_STUN_CHANNEL(ntohs(tag->channel))) {
+                turn->last_channel = TURN_CHANNEL_CTRL;
+                turn->last_framelen = ntohs(tag->length) + STUN_HLEN;
+            } else {
+                turn->last_channel = ntohs(tag->channel);
+                turn->last_framelen = ntohs(tag->length) + TURN_TAGLEN;
+                turn->last_rawlen = ntohs(tag->length);
+            }
         }
     } while (1);
-    turn->last_channel = ntohs(tag->channel);
-    return turn->last_len;
+    return turn->last_framelen;
 }
 
 
@@ -295,7 +271,7 @@ recv_frame(struct turn_socket *turn)
 static void
 discard_last_frame(struct turn_socket * turn)
 {
-    b_used_avail(&turn->rbuf, turn->last_len + TURN_TAGLEN);
+    b_used_avail(&turn->rbuf, turn->last_framelen);
     b_shrink(&turn->rbuf);
 }
 
@@ -305,9 +281,9 @@ stun_from_frame(struct turn_socket * turn)
 {
     struct stun_message *stun;
     struct buffer *rbuf = &turn->rbuf;
-    size_t slen = turn->last_len;
+    size_t slen = turn->last_framelen;
 
-    stun = stun_from_bytes(b_pos_avail(rbuf) + TURN_TAGLEN, &slen);
+    stun = stun_from_bytes(b_pos_avail(rbuf), &slen);
     discard_last_frame(turn);
     return stun;
 }
@@ -566,9 +542,9 @@ turn_recvfrom_raw(struct turn_socket *turn, char *buf, size_t len,
 
     copy_sockaddr(addr, alen, &channel->addr, channel->addrlen);
 
-    len = (turn->last_len < len) ? turn->last_len : len;
+    len = (turn->last_rawlen < len) ? turn->last_rawlen : len;
     memcpy(buf, b_pos_avail(&turn->rbuf) + TURN_TAGLEN, len);
-    if (len < turn->last_len) {
+    if (len < turn->last_rawlen) {
         turn->pos = len;
         turn->op = TS_RECV;
         return len;
@@ -576,7 +552,7 @@ turn_recvfrom_raw(struct turn_socket *turn, char *buf, size_t len,
         discard_last_frame(turn);
     }
 
-    return turn->last_len;
+    return turn->last_rawlen;
 }
 
 //------------------------------------------------------------------------------
@@ -595,11 +571,11 @@ turn_recvfrom_cont(struct turn_socket *turn, char *buf, size_t len,
 
     copy_sockaddr(addr, alen, &channel->addr, channel->addrlen);
 
-    ret = turn->last_len - turn->pos;
+    ret = turn->last_rawlen - turn->pos;
     ret = ret > len ? len : ret;
     memcpy(buf, b_pos_avail(&turn->rbuf) + TURN_TAGLEN + turn->pos, ret);
     turn->pos += ret;
-    if (turn->pos == turn->last_len) {
+    if (turn->pos == turn->last_rawlen) {
         turn->op = TS_NONE;
         discard_last_frame(turn);
     }

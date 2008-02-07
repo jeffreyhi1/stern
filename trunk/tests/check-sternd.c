@@ -27,6 +27,7 @@ int main(int argc, char **argv)
         verbose = 1;
 
     runner = srunner_create(check_stund());
+    srunner_add_suite(runner, check_turnd());
     srunner_run_all(runner, CK_MINIMAL);
 
     num_run = srunner_ntests_run(runner);
