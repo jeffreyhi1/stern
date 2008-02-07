@@ -22,13 +22,19 @@ struct sternd sternd;
 void
 sternd_init()
 {
-    event_init();
+    static int initialized = 0;
+
+    if (!initialized) {
+        event_init();
+    }
 
     memset(&sternd, 0, sizeof(sternd));
     sternd.stuntcp.sock = -1;
     sternd.stunudp.sock = -1;
     LIST_INIT(&sternd.stuntcp.clients);
     LIST_INIT(&sternd.stunudp.clients);
+
+    initialized = 1;
 }
 
 //------------------------------------------------------------------------------
@@ -56,4 +62,5 @@ void
 sternd_quit()
 {
     sternd_stun_quit();
+    sternd_init();
 }
