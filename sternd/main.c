@@ -16,44 +16,21 @@
  */
 #include "sternd.h"
 
-struct sternd sternd;
-
 //------------------------------------------------------------------------------
-void
-sternd_init()
+int main(int argc, char **argv)
 {
-    event_init();
+    int socktcp, sockudp;
 
-    memset(&sternd, 0, sizeof(sternd));
-    sternd.stuntcp.sock = -1;
-    sternd.stunudp.sock = -1;
-    LIST_INIT(&sternd.stuntcp.clients);
-    LIST_INIT(&sternd.stunudp.clients);
-}
+    sternd_init();
 
-//------------------------------------------------------------------------------
-void
-sternd_dispatch()
-{
-    event_dispatch();
-}
+    socktcp = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockudp = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sternd_set_stun_socket(IPPROTO_TCP, socktcp, PORT_STUN);
+    sternd_set_stun_socket(IPPROTO_UDP, sockudp, PORT_STUN);
 
-//------------------------------------------------------------------------------
-void
-sternd_loop()
-{
-    int i;
-    struct timeval tv = {0, 10000};
+    turn_tcp_init();
 
-    for (i = 0; i < 10; i++) {
-        event_loopexit(&tv);
-        event_loop(EVLOOP_ONCE);
-    }
-}
+    sternd_dispatch();
 
-//------------------------------------------------------------------------------
-void
-sternd_quit()
-{
-    sternd_stun_quit();
+    return 0;
 }

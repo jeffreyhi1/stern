@@ -301,7 +301,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(accessor_data)
 {
-    struct stun_message *stun = stun_new(1);
+    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     int buf[] = {rand(), rand(), rand(), rand()};
 
     stun_set_data(stun, buf, sizeof(buf));
@@ -315,7 +315,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(accessor_mapped_address)
 {
-    struct stun_message *stun = stun_new(1);
+    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     struct sockaddr addr;
 
     init_sockaddr(&addr, sizeof(addr));
@@ -329,7 +329,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(accessor_xor_mapped_address)
 {
-    struct stun_message *stun = stun_new(1);
+    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     struct sockaddr addr;
 
     init_sockaddr(&addr, sizeof(addr));
@@ -343,7 +343,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(accessor_relay_address)
 {
-    struct stun_message *stun = stun_new(1);
+    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     struct sockaddr addr;
 
     init_sockaddr(&addr, sizeof(addr));
@@ -357,7 +357,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(accessor_peer_address)
 {
-    struct stun_message *stun = stun_new(1);
+    struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     struct sockaddr addr;
 
     init_sockaddr(&addr, sizeof(addr));

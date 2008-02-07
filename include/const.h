@@ -53,6 +53,8 @@
 #define STUN_SUCCESS              0x0100
 #define STUN_ERROR                0x0110
 
+#define STUN_BINDING_REQUEST      0x0001
+
 #define TURN_ALLOCATION_REQUEST   0x0003
 #define TURN_ALLOCATION_SUCCESS   0x0103
 #define TURN_ALLOCATION_ERROR     0x0113

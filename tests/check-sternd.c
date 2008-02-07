@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "-v") == 0)
         verbose = 1;
 
-    runner = srunner_create(check_stund_udp());
+    runner = srunner_create(check_stund());
     srunner_run_all(runner, CK_MINIMAL);
 
     num_run = srunner_ntests_run(runner);
