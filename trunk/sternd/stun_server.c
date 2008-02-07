@@ -99,11 +99,7 @@ tcpcli_recv(struct stun_client *client)
     int ret;
 
     ret = b_recv(&client->s.tcp.request, client->s.tcp.sock, 0, MSG_DONTWAIT);
-    if (ret <= 0) {
-        tcpcli_free(client);
-        return -1;
-    }
-    return 0;
+    return (ret <= 0) ? -1 : 0;
 }
 
 //------------------------------------------------------------------------------
@@ -112,12 +108,10 @@ stuntcpcli_read(int fd, short ev, void *arg)
 {
     struct stun_client *client = (struct stun_client *) arg;
 
-    if (ev == EV_TIMEOUT) {
+    if (ev == EV_TIMEOUT || tcpcli_recv(client) == -1) {
         tcpcli_free(client);
         return;
     }
-    if (tcpcli_recv(client) == -1)
-        return;
 
     tcpcli_process_requests(client);
     tcpcli_set_events(client);
@@ -130,11 +124,7 @@ tcpcli_send(struct stun_client *client)
     int ret;
 
     ret = b_send(&client->s.tcp.response, client->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (ret <= 0) {
-        tcpcli_free(client);
-        return -1;
-    }
-    return 0;
+    return (ret <= 0) ? -1 : 0;
 }
 
 //------------------------------------------------------------------------------
@@ -143,12 +133,10 @@ stuntcpcli_send(int fd, short ev, void *arg)
 {
     struct stun_client *client = (struct stun_client *) arg;
 
-    if (ev == EV_TIMEOUT) {
+    if (ev == EV_TIMEOUT || tcpcli_send(client) == -1) {
         tcpcli_free(client);
         return;
     }
-    if (tcpcli_send(client) == -1)
-        return;
 
     tcpcli_set_events(client);
 }
