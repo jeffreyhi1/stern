@@ -154,10 +154,10 @@ turnreq_allocate_bind(struct turn_client *client, struct stun_message *request, 
     client->peer = fd;
     if (request->requested_transport == TURN_TRANSPORT_UDP) {
         client->protocol = IPPROTO_UDP;
-        event_set(&client->ev_peer, fd, EV_READ, turnudp_recvpeer, client);
+        event_set(&client->ev_peer, fd, EV_READ | EV_PERSIST, turnudp_recvpeer, client);
     } else if (request->requested_transport == TURN_TRANSPORT_TCP) {
         client->protocol = IPPROTO_TCP;
-        event_set(&client->ev_peer, fd, EV_READ, turntcp_acceptpeer, client);
+        event_set(&client->ev_peer, fd, EV_READ | EV_PERSIST, turntcp_acceptpeer, client);
     }
     event_base_set(client->server->sternd->base, &client->ev_peer);
 
