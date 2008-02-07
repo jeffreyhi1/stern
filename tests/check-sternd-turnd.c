@@ -186,6 +186,7 @@ do_listen(int cli)
     stun = cli_recv(cli);
     fail_if(stun == NULL, "No message");
     fail_if(stun->message_type != TURN_LISTEN_SUCCESS, "Listen failed");
+    stun_free(stun);
 }
 
 static void
@@ -226,11 +227,13 @@ do_accept(int cli, int fd, struct sockaddr *relay, struct sockaddr *peer, int *c
     fail_if(stun->peer_address == NULL, "No peer");
     fail_if(stun->channel == -1, "No channel");
 
+    len = sizeof(addr);
     getsockname(fd, &addr, &len);
     check_address(stun->peer_address, &addr);
 
     memcpy(peer, stun->peer_address, stun->peer_address_len);
     *ch = stun->channel;
+    stun_free(stun);
 }
 
 static void
@@ -254,6 +257,7 @@ do_stun_send(int cli, struct sockaddr *peer, socklen_t rlen, int chan, int fd)
     fail_if(stun == NULL, "No message");
     fail_if(stun->message_type != TURN_CHAN_CONF_INDICATION, "Bad type");
     fail_if(stun->connect_status != TURN_CONNSTAT_ESTABLISHED, "Bad status");
+    stun_free(stun);
 
     len = 0;
     while (len < sizeof(buffer)) {
@@ -271,6 +275,8 @@ do_raw_send(int cli, int chan, int fd)
     int i, len;
     char buffer[128], buf2[128];
 
+    for(i = 0; i < sizeof(buffer); i++)
+        buffer[i] = random();
     cli_sendraw(chan, buffer, sizeof(buffer), cli);
     srv_loop();
 
@@ -299,7 +305,7 @@ do_stun_send_close(int cli, struct sockaddr *peer, socklen_t rlen, int chan, int
     cli_send(stun, cli);
     srv_loop();
 
-    i = recv(fd, buf2 + len, sizeof(buf2) - len, 0);
+    i = recv(fd, buf2, sizeof(buf2), 0);
     fail_if(i != 0, "Expending close");
 }
 
@@ -362,6 +368,7 @@ do_stun_recv_close(int cli, struct sockaddr *peer, socklen_t rlen, int chan, int
     fail_unless(stun->channel == chan, "Wrong channel");
     fail_if(stun->peer_address == NULL, "No peer");
     check_address(stun->peer_address, peer);
+    stun_free(stun);
 }
 
 
@@ -402,6 +409,7 @@ START_TEST(turntcp_accept)
 
     fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     do_accept(cli, fd, &relay, &peer, &cfd, len);
+    close(fd);
 }
 END_TEST
 
@@ -422,6 +430,7 @@ START_TEST(turntcp_send)
     do_stun_send(cli, &peer, len, CHAN_1, fd);
     do_raw_send(cli, CHAN_1, fd);
     do_stun_send_close(cli, &peer, len, CHAN_1, fd);
+    close(fd);
 }
 END_TEST
 
