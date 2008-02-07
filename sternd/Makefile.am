@@ -5,7 +5,8 @@ INCLUDES = -I$(top_srcdir)/include
 
 libsternd_la_SOURCES = stun_server.c \
 					   turn_server.c \
-					   ../src/util.c
+					   ../src/util.c \
+					   ../src/buffer.c
 
 sternd_SOURCES = sternd.c
 sternd_LDADD = libsternd.la ../libstern/libstern.la

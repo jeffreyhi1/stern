@@ -19,8 +19,32 @@
 
 #include <sys/types.h>
 
+#define BUFFER_MIN     256
+#define BUFFER_MAX     8192
+
+struct buffer {
+    size_t len;
+    size_t pos;
+    size_t size;
+    void *bytes;
+};
+
 void *s_malloc(size_t len);
 void *s_realloc(void *ptr, size_t len);
 void s_free(void *ptr);
+
+void b_init(struct buffer *buf);
+void b_reset(struct buffer *buf);
+void b_grow(struct buffer *buf);
+void b_shrink(struct buffer *buf);
+#define b_is_empty(buf)           ((buf)->len  == (buf)->pos)
+#define b_pos_avail(buf)          ((buf)->bytes + (buf)->pos)
+#define b_num_avail(buf)          ((buf)->len   - (buf)->pos)
+#define b_used_avail(buf, num)    do { (buf)->pos += (num); } while(0)
+#define b_pos_free(buf)           ((buf)->bytes + (buf)->len)
+#define b_num_free(buf)           ((buf)->size  - (buf)->len)
+#define b_used_free(buf, num)     do { (buf)->len += (num); } while(0)
+ssize_t b_recv(struct buffer *buf, int fd, size_t max, int flags);
+ssize_t b_send(struct buffer *buf, int fd, int flags);
 
 #endif

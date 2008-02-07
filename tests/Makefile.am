@@ -16,7 +16,8 @@ check_libstern_coverage_SOURCES = $(check_libstern_SOURCES) \
 								  ../libstern/parse.c \
 								  ../libstern/stun.c \
 								  ../libstern/turn.c \
-								  ../src/util.c
+								  ../src/util.c \
+								  ../src/buffer.c
 check_libstern_coverage_CFLAGS = $(COV_CFLAGS)
 
 check_sternd_SOURCES = check-sternd.c \
@@ -27,7 +28,8 @@ check_sternd_LDADD = ../sternd/libsternd.la \
 check_sternd_coverage_SOURCES = $(check_sternd_SOURCES) \
 								../sternd/stun_server.c \
 								../sternd/turn_server.c \
-								../src/util.c
+								../src/util.c \
+								../src/buffer.c
 check_sternd_coverage_LDADD = ../libstern/libstern.la
 check_sternd_coverage_CFLAGS = $(COV_CFLAGS)
 

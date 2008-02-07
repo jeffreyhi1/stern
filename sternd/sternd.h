@@ -34,8 +34,6 @@
 #include "const.h"
 #include "internal.h"
 
-#define BUFFER_MIN     256
-#define BUFFER_MAX     8192
 #define CLIENT_TIMEOUT 120
 
 void *stun_tcp_init();

@@ -14,86 +14,88 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <sys/queue.h>
+
 #include "sternd.h"
 
-struct buffer {
-    size_t len, pos;
-    void *bytes;
+struct server;
+
+struct serverstate_tcp {
+    struct event ev_accept;
+    struct timeval *client_timeout;
 };
 
-struct server {
-    int sock;
-    int shut;
-    int nclients;
-    struct event ev_accept;
+struct serverstate_udp {
     struct event ev_recv;
-    struct timeval *client_timeout;
-    struct sockaddr_in addr;
+};
+
+struct clientstate_tcp {
+    int clisock;
+    struct event ev_read, ev_write;
+    struct buffer request, response;
+};
+
+struct clientstate_udp {
 };
 
 struct client {
     struct server *server;
-    int sock;
     struct sockaddr addr;
-    struct event ev_read, ev_write;
-    struct buffer request, response;
+    union {
+        struct clientstate_tcp tcp;
+        struct clientstate_udp udp;
+    } s;
+    LIST_ENTRY(client) entries;
+};
+
+struct server {
+    int protocol;
+    int srvsock;
+    int closing;
+    struct sockaddr_in addr;
+    union {
+        struct serverstate_tcp tcp;
+        struct serverstate_udp udp;
+    } s;
+    LIST_HEAD(clients, client) clients;
 };
 
 static struct timeval timeout = { CLIENT_TIMEOUT, 0 };
 
 //------------------------------------------------------------------------------
-int
-buffer_expand(struct buffer *buf)
-{
-    if (buf->len * 2 > BUFFER_MAX) {
-        return -1;
-    }
-    buf->len *= 2;
-    if (buf->len == 0)
-        buf->len = BUFFER_MIN;
-    buf->bytes = s_realloc(buf->bytes, buf->len);
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-void
-buffer_collapse(struct buffer *buf, size_t len)
-{
-    buf->pos -= len;
-    if (buf->pos == 0) {
-        buf->len = 0;
-        s_free(buf->bytes);
-        buf->bytes = NULL;
-    } else {
-        memmove(buf->bytes, buf->bytes + len, buf->pos);
-    }
-}
-
-//------------------------------------------------------------------------------
 static void
-on_server_error(struct server *server)
+server_free(struct server *server)
 {
-    if (server->sock != -1) {
-        close(server->sock);
-        event_del(&server->ev_accept);
+    assert(LIST_EMPTY(&server->clients));
+
+    if (server->srvsock != -1) {
+        close(server->srvsock);
+        if (server->protocol == IPPROTO_TCP)
+            event_del(&server->s.tcp.ev_accept);
+        else if (server->protocol == IPPROTO_UDP)
+            event_del(&server->s.udp.ev_recv);
     }
     s_free(server);
 }
 
 //------------------------------------------------------------------------------
 static void
-on_client_error(struct client *client)
+client_free(struct client *client)
 {
-    close(client->sock);
-    event_del(&client->ev_read);
-    event_del(&client->ev_write);
-    if (client->request.bytes)
-        s_free(client->request.bytes);
-    if (client->response.bytes)
-        s_free(client->response.bytes);
-    client->server->nclients--;
-    if (client->server->nclients == 0 && client->server->shut)
-        on_server_error(client->server);
+    if (client->server->protocol == IPPROTO_TCP) {
+        if (client->s.tcp.clisock != -1)
+            close(client->s.tcp.clisock);
+        event_del(&client->s.tcp.ev_read);
+        event_del(&client->s.tcp.ev_write);
+        b_reset(&client->s.tcp.request);
+        b_reset(&client->s.tcp.response);
+    } else if (client->server->protocol == IPPROTO_UDP) {
+    }
+
+    LIST_REMOVE(client, entries);
+    if (LIST_EMPTY(&client->server->clients) && client->server->closing)
+        server_free(client->server);
+
     s_free(client);
 }
 
@@ -101,17 +103,19 @@ on_client_error(struct client *client)
 static void
 client_set_events(struct client *client)
 {
-    if (client->response.pos > 0)
-        event_add(&client->ev_write, client->server->client_timeout);
+    assert(client->server->protocol == IPPROTO_TCP);
+
+    if (!b_is_empty(&client->s.tcp.response))
+        event_add(&client->s.tcp.ev_write, client->server->s.tcp.client_timeout);
     else
-        event_add(&client->ev_read, client->server->client_timeout);
+        event_add(&client->s.tcp.ev_read, client->server->s.tcp.client_timeout);
 }
 
 //------------------------------------------------------------------------------
-static int
+static void
 client_expand_write_buffer(struct client *client)
 {
-    return buffer_expand(&client->response);
+    b_grow(&client->s.tcp.response);
 }
 
 //------------------------------------------------------------------------------
@@ -129,23 +133,23 @@ client_queue_response(struct client *client, struct stun_message *request)
     void *wbuf;
     size_t wlen;
     struct stun_message *response;
+    struct clientstate_tcp *state = &client->s.tcp;
 
-    if (client->server->shut)
+    if (client->server->closing)
         return;
     response = stun_default_responser(request, &client->addr);
     if (response) {
         ret = -1;
         do {
-            if (client->response.len == 0
-                || client->response.len - client->response.pos < BUFFER_MIN)
-                if (client_expand_write_buffer(client) == -1)
-                    break;
-            wbuf = client->response.bytes + client->response.pos;
-            wlen = client->response.len - client->response.pos;
+            if (state->response.len == 0
+                || state->response.len - state->response.pos < BUFFER_MIN)
+                client_expand_write_buffer(client);
+            wbuf = state->response.bytes + state->response.pos;
+            wlen = state->response.len - state->response.pos;
             ret = stun_to_bytes(wbuf, wlen, response);
         } while (ret == -1);
         if (ret != -1)
-            client->response.pos += ret;
+            state->response.pos += ret;
         stun_free(response);
     }
 }
@@ -158,12 +162,13 @@ client_process_requests(struct client *client)
     size_t rlen;
     void *rbuf;
     struct stun_message *request;
+    struct clientstate_tcp *state = &client->s.tcp;
 
     /* Process requests */
-    rbuf = client->request.bytes;
+    rbuf = state->request.bytes;
     do {
         processed = 0;
-        rlen = client->request.pos - (rbuf - client->request.bytes);
+        rlen = state->request.pos - (rbuf - state->request.bytes);
         request = stun_from_bytes(rbuf, &rlen);
         if (request) {
             rbuf += rlen;
@@ -174,7 +179,7 @@ client_process_requests(struct client *client)
     } while (processed);
 
     /* Shrink buffers */
-    buffer_collapse(&client->request, rbuf - client->request.bytes);
+    b_shrink(&state->request);
 }
 
 //------------------------------------------------------------------------------
@@ -182,27 +187,24 @@ static int
 client_read(struct client *client)
 {
     int ret;
-    void *buf = client->request.bytes + client->request.pos;
-    size_t len = client->request.len - client->request.pos;
+    struct clientstate_tcp *state = &client->s.tcp;
+    void *buf = state->request.bytes + state->request.pos;
+    size_t len = state->request.len - state->request.pos;
 
-    ret = read(client->sock, buf, len);
+    ret = read(client->s.tcp.clisock, buf, len);
     if (ret <= 0) {
-        on_client_error(client);
+        client_free(client);
         return -1;
     }
-    client->request.pos += ret;
+    state->request.pos += ret;
     return 0;
 }
 
 //------------------------------------------------------------------------------
-static int
+static void
 client_expand_read_buffer(struct client *client)
 {
-    if (buffer_expand(&client->request) == -1) {
-        on_client_error(client);
-        return -1;
-    }
-    return 0;
+    b_grow(&client->s.tcp.request);
 }
 
 //------------------------------------------------------------------------------
@@ -211,15 +213,14 @@ on_client_read(int fd, short ev, void *arg)
 {
     struct client *client = (struct client *) arg;
 
-    if (ev == EV_TIMEOUT || client->server->shut) {
-        on_client_error(client);
+    if (ev == EV_TIMEOUT || client->server->closing) {
+        client_free(client);
         return;
     }
 
-    if (client->request.len == 0
-        || client->request.len - client->request.pos < BUFFER_MIN)
-        if (client_expand_read_buffer(client) == -1)
-            return;
+    if (client->s.tcp.request.len == 0
+        || client->s.tcp.request.len - client->s.tcp.request.pos < BUFFER_MIN)
+        client_expand_read_buffer(client);
 
     if (client_read(client) == -1)
         return;
@@ -235,12 +236,12 @@ client_write(struct client *client)
 {
     int ret;
 
-    ret = write(client->sock, client->response.bytes, client->response.pos);
+    ret = write(client->s.tcp.clisock, client->s.tcp.response.bytes, client->s.tcp.response.pos);
     if (ret <= 0) {
-        on_client_error(client);
+        client_free(client);
         return -1;
     }
-    buffer_collapse(&client->response, ret);
+    b_shrink(&client->s.tcp.response);
     return 0;
 }
 
@@ -250,8 +251,8 @@ on_client_write(int fd, short ev, void *arg)
 {
     struct client *client = (struct client *) arg;
 
-    if (ev == EV_TIMEOUT || client->server->shut) {
-        on_client_error(client);
+    if (ev == EV_TIMEOUT || client->server->closing) {
+        client_free(client);
         return;
     }
 
@@ -269,12 +270,12 @@ client_new(int fd, struct sockaddr *addr, struct server *server)
     client = s_malloc(sizeof(struct client));
     memset(client, 0, sizeof(struct client));
     client->server = server;
-    server->nclients++;
-    client->sock = fd;
+    LIST_INSERT_HEAD(&server->clients, client, entries);
+    client->s.tcp.clisock = fd;
     if (addr)
         client->addr = *addr;
-    event_set(&client->ev_read, fd, EV_READ, on_client_read, client);
-    event_set(&client->ev_write, fd, EV_WRITE, on_client_write, client);
+    event_set(&client->s.tcp.ev_read, fd, EV_READ, on_client_read, client);
+    event_set(&client->s.tcp.ev_write, fd, EV_WRITE, on_client_write, client);
     client_set_events(client);
     return client;
 }
@@ -333,9 +334,9 @@ stun_tcp_stop(void *arg)
 {
     struct server *server = (struct server *) arg;
 
-    server->shut = 1;
-    if (server->nclients == 0)
-        on_server_error(server);
+    server->closing = 1;
+    if (LIST_EMPTY(&server->clients))
+        server_free(server);
 }
 
 //------------------------------------------------------------------------------
@@ -345,12 +346,12 @@ server_new(int  fd)
     struct server *server;
 
     server = (struct server *) s_malloc(sizeof(struct server));
-    server->sock = fd;
-    server->shut = 0;
-    server->client_timeout = &timeout;
+    server->srvsock = fd;
+    server->closing = 0;
+    server->s.tcp.client_timeout = &timeout;
     if (fd != -1) {
-        event_set(&server->ev_accept, fd, EV_READ | EV_PERSIST, on_srv_accept, server);
-        event_add(&server->ev_accept, NULL);
+        event_set(&server->s.tcp.ev_accept, fd, EV_READ | EV_PERSIST, on_srv_accept, server);
+        event_add(&server->s.tcp.ev_accept, NULL);
     }
     return server;
 }
@@ -391,16 +392,16 @@ stun_udp_init()
     server->addr.sin_addr.s_addr = INADDR_ANY;
     server->addr.sin_port = htons(PORT_STUN);
 
-    server->sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    if (bind(server->sock, (struct sockaddr *)&server->addr, sizeof(server->addr))) {
-        close(server->sock);
+    server->srvsock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    setsockopt(server->srvsock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    if (bind(server->srvsock, (struct sockaddr *)&server->addr, sizeof(server->addr))) {
+        close(server->srvsock);
         s_free(server);
         return NULL;
     }
 
-    event_set(&server->ev_recv, server->sock, EV_READ|EV_PERSIST, on_recv, server);
-    event_add(&server->ev_recv, NULL);
+    event_set(&server->s.udp.ev_recv, server->srvsock, EV_READ|EV_PERSIST, on_recv, server);
+    event_add(&server->s.udp.ev_recv, NULL);
 
     return server;
 }
