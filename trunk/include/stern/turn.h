@@ -55,4 +55,7 @@ turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen);
 void
 turn_close(turn_socket_t socket);
 
+int
+turn_get_selectable_fd(turn_socket_t socket);
+
 #endif

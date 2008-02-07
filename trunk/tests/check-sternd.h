@@ -33,9 +33,9 @@
 
 #include <check.h>
 
-Suite *check_stund_tcp();
-Suite *check_stund_udp();
-Suite *check_turnd_tcp();
-Suite *check_turnd_udp();
+Suite *check_stund();
+Suite *check_turnd();
+
+char *tr_str(TestResult *);
 
 #endif

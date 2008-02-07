@@ -834,7 +834,7 @@ START_TEST(vector_2_2)
     char *server = "test vector";
     int port = 32853;
     int ip = 0xc0000201;
-    char *xact_id = "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
+    unsigned char *xact_id = (uint8_t *) "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
     struct sockaddr_in *sin;
 
     stun_add_xact_password(xact_id, password, strlen(password));
@@ -916,7 +916,7 @@ START_TEST(vector_2_3)
     char *server = "test vector";
     int port = 32853;
     char *ip = "\x20\x01\x0d\xb8\x12\x34\x56\x78\x00\x11\x22\x33\x44\x55\x66\x77";
-    char *xact_id = "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
+    unsigned char *xact_id = (uint8_t *) "\xb7\xe7\xa7\x01\xbc\x34\xd6\x86\xfa\x87\xdf\xae";
     struct sockaddr_in6 *sin6;
 
     stun_add_xact_password(xact_id, password, strlen(password));

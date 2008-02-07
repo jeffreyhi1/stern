@@ -1208,9 +1208,9 @@ stun_add_user_password(char *username, char *password, int len)
 
 //------------------------------------------------------------------------------
 void
-stun_add_xact_password(char *xact_id, char *password, int len)
+stun_add_xact_password(unsigned char *xact_id, char *password, int len)
 {
-    add_auth_key_by_xid(password, len, (uint8_t *) xact_id);
+    add_auth_key_by_xid(password, len, xact_id);
 }
 
 //------------------------------------------------------------------------------

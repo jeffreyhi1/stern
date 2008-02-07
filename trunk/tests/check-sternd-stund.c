@@ -50,12 +50,13 @@ cli_recv(int cli)
 {
     char buf[8192];
     struct stun_message *stun;
-    unsigned int len, olen;
+    size_t len;
+    int olen;
 
-    len = recv(cli, buf, sizeof(buf), 0);
-    if (len <= 0)
+    olen = recv(cli, buf, sizeof(buf), 0);
+    if (olen <= 0)
         return NULL;
-    olen = len;
+    len = olen;
     stun = stun_from_bytes(buf, &len);
     fail_if(stun == NULL, "Bad message");
     fail_if(olen != len, "Extra bytes");

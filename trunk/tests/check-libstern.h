@@ -35,4 +35,8 @@ Suite *check_parser();
 Suite *check_stun();
 Suite *check_turn();
 
+char *tr_str(TestResult *);
+
+
+
 #endif

@@ -171,6 +171,7 @@ static struct stun_message *
 mocktcpsrv_read()
 {
     int ret;
+    size_t slen;
     uint16_t val;
     struct stun_message *turn;
 
@@ -188,7 +189,8 @@ mocktcpsrv_read()
         *((uint16_t *) &buf[0]) = htons(channel);
         *((uint16_t *) &buf[2]) = htons(length);
         length = length + STUN_HLEN;
-        turn = stun_from_bytes(buf, &length);
+        slen = length;
+        turn = stun_from_bytes(buf, &slen);
         fail_if(turn == NULL, "Invalid message");
         return turn;
     } else {
@@ -705,7 +707,7 @@ START_TEST(tcpsock_recvfrom_accept)
     switch (fuzzes[_i]) {
         case F_SUCCESS:
             fail_unless(ret == -2 && errno == EAGAIN, "Expecting retry request");
-            check_sockaddr(&sina, sizeof(struct sockaddr_in), &sinb, blen);
+            check_sockaddr(SA(&sina), sizeof(struct sockaddr_in), SA(&sinb), blen);
             break;
 
         case F_ERROR:
@@ -762,7 +764,7 @@ START_TEST(tcpsock_recvfrom_small)
             case F_SUCCESS:
                 fail_unless(ret == len, "Invalid size");
                 fail_unless(memcmp(rbuf, buf, len) == 0, "Invalid data");
-                check_sockaddr(&sina, sizeof(struct sockaddr_in), &sinb, blen);
+                check_sockaddr(SA(&sina), sizeof(struct sockaddr_in), SA(&sinb), blen);
                 tcpsock_opmutex(~(T_GETSOCKNAME|T_PERMIT|T_RECVFROM|T_SENDTO|T_SHUTDOWN));
                 break;
 
