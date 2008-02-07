@@ -32,22 +32,6 @@ static void turntcpchan_read(int fd, short ev, void *arg);
 static void turntcpchan_send(int fd, short ev, void *arg);
 static void tcpchan_set_events(struct turn_channel *channel);
 
-#if 0
-//------------------------------------------------------------------------------
-static void
-on_peer_shutrd(struct channel *channel)
-{
-    struct sockaddr addr;
-    socklen_t len = sizeof(addr);
-
-    event_del(channel->ev_peerread);
-    s_free(channel->ev_peerread);
-    channel->ev_peerread = NULL;
-    getsockname(channel->peer, &addr, &len);
-    channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_CLOSED);
-}
-#endif
-
 //------------------------------------------------------------------------------
 static int
 turnchan_getid(struct turn_client *client)
@@ -58,6 +42,7 @@ turnchan_getid(struct turn_client *client)
     do {
         chan = rand() & 0xFFFF;
         chan |= ((rand() + 1) & 0x3) << 14;
+        if (IS_STUN_CHANNEL(chan)) continue;
         if (--tries == 0)
             return -1;
         for (channel = LIST_FIRST(&client->channels); channel;
@@ -128,6 +113,9 @@ turnreq_allocate_req_ip_port(struct turn_client *client, struct stun_message *re
         sin->sin_addr.s_addr = INADDR_ANY;
         sin->sin_port = 0;
         return 0;
+    } else {
+        // Client requested IP/Port not supported
+        assert(0);
     }
     return -1;
 }
@@ -155,11 +143,12 @@ turnreq_allocate_bind(struct turn_client *client, struct stun_message *request, 
     if (request->requested_transport == TURN_TRANSPORT_UDP) {
         client->protocol = IPPROTO_UDP;
         event_set(&client->ev_peer, fd, EV_READ | EV_PERSIST, turnudp_recvpeer, client);
+        event_base_set(client->server->sternd->base, &client->ev_peer);
     } else if (request->requested_transport == TURN_TRANSPORT_TCP) {
         client->protocol = IPPROTO_TCP;
         event_set(&client->ev_peer, fd, EV_READ | EV_PERSIST, turntcp_acceptpeer, client);
+        event_base_set(client->server->sternd->base, &client->ev_peer);
     }
-    event_base_set(client->server->sternd->base, &client->ev_peer);
 
     return 0;
 }
@@ -170,15 +159,16 @@ turnreq_allocate(struct stun_message *request, struct turn_client *client)
 {
     struct sockaddr addr;
 
-    if (client->peer != -1)
+    if (client->allocated)
         return NULL;
 
     if (turnreq_allocate_req_ip_port(client, request, &addr) == -1
         || turnreq_allocate_bind(client, request, &addr, sizeof(addr)) == -1)
         return NULL;
 
-    client->bandwidth = DEFAULT_BANDWIDTH;
+    client->bandwidth = (request->bandwidth == -1) ? DEFAULT_BANDWIDTH : request->bandwidth;
     client->expires = time(NULL) + DEFAULT_LIFETIME;
+    client->allocated = 1;
 
     return turnreq_allocate_respond(request, client);
 }
@@ -190,7 +180,7 @@ turnreq_listen(struct stun_message *request, struct turn_client *client)
     struct stun_message *response;
     int ret;
 
-    if (client->peer == -1 || client->protocol != IPPROTO_TCP)
+    if (!client->allocated || client->protocol != IPPROTO_TCP)
         return NULL;
 
     ret = listen(client->peer, 5);
@@ -231,6 +221,7 @@ tcpchan_find(struct turn_client *client, int chan, struct sockaddr *addr)
                 return channel;
         }
     }
+
     return NULL;
 }
 
@@ -240,16 +231,19 @@ turnind_connstat(struct stun_message *request, struct turn_client *client)
 {
     struct turn_channel *channel;
 
+    // FIXME: (draft-ietf-behave-turn-tcp) A Connection Status Indiciation MUST
+    // also contain a REMOTE-ADDRESS attribute
     if (!request->peer_address)
         return;
 
+    // SUGGEST: CHANNEL attribute would help
     channel = tcpchan_find(client, -1, request->peer_address);
     if (channel == NULL) return;
 
+    // SUGGEST: CONNECT STATUS attibute of CLOSED should indicate shutdown(SHUT_WR)
     if (request->connect_status == TURN_CONNSTAT_CLOSED) {
         channel->s.tcp.shut_wr_pending = 1;
-        if (!channel->s.tcp.shut_wr)
-            event_add(&channel->s.tcp.ev_write, NULL);
+        tcpchan_set_events(channel);
     }
 }
 
@@ -268,6 +262,7 @@ turnind_send_queue_data(struct turn_client *client, struct turn_channel *channel
         b_used_free(&channel->s.tcp.wbuf, request->data_len);
         tcpchan_set_events(channel);
     } else {
+        // FIXME: UDP not implemented
         assert(0);
     }
 }
@@ -329,10 +324,8 @@ turntcp_newchannel(int fd, struct sockaddr *addr, socklen_t len, struct turn_cli
     channel->num_self = chan;
     channel->client = client;
     channel->protocol = IPPROTO_TCP;
-    if (addr) {
-        channel->addr = *addr;
-        channel->slen = len;
-    }
+    channel->addr = *addr;
+    channel->slen = len;
     event_set(&channel->s.tcp.ev_read, fd, EV_READ, turntcpchan_read, channel);
     event_set(&channel->s.tcp.ev_write, fd, EV_WRITE, turntcpchan_send, channel);
     event_base_set(client->server->sternd->base, &channel->s.tcp.ev_read);
@@ -348,6 +341,8 @@ turntcp_connect(struct stun_message *request, struct turn_client *client, struct
     int fd, ret;
     struct turn_channel *channel;
 
+    // FIXME: (draft-ietf-behave-turn-tcp) A Connection Status Indiciation MUST
+    // also contain a REMOTE-ADDRESS attribute
     fd = socket(request->peer_address->sa_family, SOCK_STREAM, IPPROTO_TCP);
     if (fd == -1)
         return NULL;
@@ -413,6 +408,7 @@ tcpchan_process_requests(struct turn_channel *channel)
         tag->length = htons(rlen);
         memcpy(b_pos_free(&client->s.tcp.wbuf) + TURN_TAGLEN, b_pos_avail(&channel->s.tcp.rbuf), rlen);
         b_used_free(&client->s.tcp.wbuf, dlen);
+        b_used_avail(&channel->s.tcp.rbuf, rlen);
         tcpcli_set_events(client);
     } else {
         stun = stun_new(TURN_SEND_INDICATION);
@@ -420,9 +416,11 @@ tcpchan_process_requests(struct turn_channel *channel)
         stun_set_data(stun, b_pos_avail(&channel->s.tcp.rbuf), rlen);
         stun->channel = channel->num_self;
         tcpcli_queueresponse(client, stun);
+        if (client->server->protocol == IPPROTO_TCP)
+            channel->confirmed_by_client = 1;
+        b_used_avail(&channel->s.tcp.rbuf, rlen);
         stun_free(stun);
     }
-    b_used_avail(&channel->s.tcp.rbuf, rlen);
 }
 
 //------------------------------------------------------------------------------
@@ -628,7 +626,8 @@ tcpchan_free(struct turn_channel *channel)
 static void
 tcpchan_set_events(struct turn_channel *channel)
 {
-    if (!channel->s.tcp.shut_wr && !b_is_empty(&channel->s.tcp.wbuf))
+    if (!channel->s.tcp.shut_wr &&
+        (!b_is_empty(&channel->s.tcp.wbuf) || channel->s.tcp.shut_wr_pending))
         event_add(&channel->s.tcp.ev_write, NULL);
     if (!channel->s.tcp.shut_rd)
         event_add(&channel->s.tcp.ev_read, NULL);
