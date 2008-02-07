@@ -732,7 +732,7 @@ turn_sendto(turn_socket_t socket, char *buf, size_t len,
 }
 
 //------------------------------------------------------------------------------
-ssize_t
+int
 turn_shutdown(turn_socket_t socket, struct sockaddr *addr, socklen_t alen)
 {
     struct turn_socket *turn = FROM_TS(socket);

@@ -194,8 +194,7 @@ stunudp_recv(int fd, short ev, void *arg)
     if (ret <= 0) return;
 
     /* Process request */
-    len = ret;
-    request = stun_from_bytes(buf, &len);
+    request = stun_from_bytes(buf, &ret);
     if (request) {
         response = stun_default_responder(request, &addr);
         if (response) {
