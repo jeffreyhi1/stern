@@ -1,6 +1,11 @@
 bin_PROGRAMS = sternd
+noinst_LTLIBRARIES = libsternd.la
 noinst_HEADERS = sternd.h
 INCLUDES = -I$(top_srcdir)/include
-LDADD = ../libstern/libstern.la
 
-sternd_SOURCES = sternd.c stun_server_tcp.c stun_server_udp.c turn_server.c $(top_srcdir)/src/util.c
+libsternd_la_SOURCES = stun_server.c \
+					   turn_server.c \
+					   ../src/util.c
+
+sternd_SOURCES = sternd.c
+sternd_LDADD = libsternd.la ../libstern/libstern.la

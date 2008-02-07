@@ -26,7 +26,9 @@ struct server {
     int shut;
     int nclients;
     struct event ev_accept;
+    struct event ev_recv;
     struct timeval *client_timeout;
+    struct sockaddr_in addr;
 };
 
 struct client {
@@ -296,6 +298,36 @@ on_srv_accept(int fd, short ev, void *arg)
 }
 
 //------------------------------------------------------------------------------
+static void
+on_recv(int fd, short ev, void *arg)
+{
+    struct server *server = (struct server *) arg;
+    struct stun_message *request, *response;
+    struct sockaddr addr;
+    socklen_t len = sizeof(addr);
+    char buf[BUFFER_MAX];
+    int ret;
+
+    /* Receive message */
+    ret = recvfrom(fd, buf, sizeof(buf), 0, &addr, &len);
+    if (ret <= 0) return;
+
+    /* Process request */
+    len = ret;
+    request = stun_from_bytes(buf, &len);
+    if (request) {
+        response = stun_respond_to(request, &addr);
+        if (response) {
+            ret = stun_to_bytes(buf, sizeof(buf), response);
+            if (ret > 0)
+                sendto(fd, buf, ret, 0, &addr, len);
+            stun_free(response);
+        }
+        stun_free(request);
+    }
+}
+
+//------------------------------------------------------------------------------
 void
 stun_tcp_stop(void *arg)
 {
@@ -346,3 +378,29 @@ stun_tcp_init()
     return server_new(fd);
 }
 
+//------------------------------------------------------------------------------
+void *
+stun_udp_init()
+{
+    struct server *server;
+    static int one = 1;
+
+    server = (struct server *) s_malloc(sizeof(struct server));
+
+    server->addr.sin_family = AF_INET;
+    server->addr.sin_addr.s_addr = INADDR_ANY;
+    server->addr.sin_port = htons(PORT_STUN);
+
+    server->sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    if (bind(server->sock, (struct sockaddr *)&server->addr, sizeof(server->addr))) {
+        close(server->sock);
+        s_free(server);
+        return NULL;
+    }
+
+    event_set(&server->ev_recv, server->sock, EV_READ|EV_PERSIST, on_recv, server);
+    event_add(&server->ev_recv, NULL);
+
+    return server;
+}
