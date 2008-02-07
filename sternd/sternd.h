@@ -123,6 +123,7 @@ struct turn_client {
     int peer;
     int protocol;
     int num_channels;
+    int allocated;
     struct event ev_peer;
     time_t expires;
     union {
