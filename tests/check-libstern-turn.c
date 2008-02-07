@@ -18,6 +18,10 @@
 
 #include <netinet/tcp.h>
 
+#define CHAN_1    0x4001
+#define CHAN_2    0x4002
+#define CHAN_42   0x4042
+
 turn_socket_t tsock;
 int srv, cli;
 struct sockaddr caddr, raddr;
@@ -178,14 +182,20 @@ mocktcpsrv_read()
     fail_unless(ret == 2, "Invalid read");
     length = ntohs(val);
 
-    ret = read(cli, buf, length);
-    fail_unless(ret == length, "Invalid read");
-
-    if (channel == TURN_CHANNEL_CTRL) {
+    if (IS_STUN_CHANNEL(channel)) {
+        ret = read(cli, buf + TURN_TAGLEN, length + STUN_HLEN - TURN_TAGLEN);
+        fail_unless(ret == length + STUN_HLEN - TURN_TAGLEN, "Invalid read");
+        *((uint16_t *) &buf[0]) = htons(channel);
+        *((uint16_t *) &buf[2]) = htons(length);
+        length = length + STUN_HLEN;
         turn = stun_from_bytes(buf, &length);
         fail_if(turn == NULL, "Invalid message");
         return turn;
+    } else {
+        ret = read(cli, buf, length);
+        fail_unless(ret == length, "Invalid read");
     }
+
     return NULL;
 }
 
@@ -195,10 +205,12 @@ mocktcpsrv_write(char *buf, int channel, int len, enum fuzz fuzz)
 {
     uint16_t val1, val2;
 
-    val1 = htons(channel);
-    val2 = htons(len);
-    fail_if(send(cli, &val1, sizeof(val1), MSG_MORE) != 2, "Invalid write");
-    fail_if(send(cli, &val2, sizeof(val2), MSG_MORE) != 2, "Invalid write");
+    if (channel != TURN_CHANNEL_CTRL) {
+        val1 = htons(channel);
+        val2 = htons(len);
+        fail_if(send(cli, &val1, sizeof(val1), MSG_MORE) != 2, "Invalid write");
+        fail_if(send(cli, &val2, sizeof(val2), MSG_MORE) != 2, "Invalid write");
+    }
     if (!(fuzz & F_READERR_INTERRUPTED))
         fail_if(send(cli, buf, len, 0) != len, "Invalid write");
     else
@@ -241,7 +253,7 @@ mocksrv_do_bind(enum fuzz fuzz)
     if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
     else
-        channel = 42;
+        channel = CHAN_42;
 
     if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
@@ -297,7 +309,7 @@ mocksrv_do_listen(enum fuzz fuzz)
     if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
     else
-        channel = 42;
+        channel = CHAN_42;
 
     if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
@@ -332,7 +344,7 @@ mocksrv_do_accept(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
     if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
     else
-        channel = 42;
+        channel = CHAN_42;
 
     if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
@@ -357,7 +369,7 @@ mocksrv_do_recv(size_t len, int chan, enum fuzz fuzz)
     if (!(fuzz & F_CHANNEL))
         channel = chan;
     else
-        channel = 42;
+        channel = CHAN_42;
 
     if (!(fuzz & F_READERR_SHUT)) {
         mocktcpsrv_write(buf, channel, len, fuzz);
@@ -387,7 +399,7 @@ mocksrv_do_shut(struct sockaddr *sin, socklen_t len, int chan, enum fuzz fuzz)
     if (!(fuzz & F_CHANNEL))
         channel = TURN_CHANNEL_CTRL;
     else
-        channel = 42;
+        channel = CHAN_42;
 
     if (!(fuzz & F_READERR_SHUT)) {
         len = stun_to_bytes(buf, sizeof(buf), response);
@@ -688,7 +700,7 @@ START_TEST(tcpsock_recvfrom_accept)
     mocksrv_do_permit();
 
     /* "Accept" the socket */
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, fuzzes[_i]);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, fuzzes[_i]);
     ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
     switch (fuzzes[_i]) {
         case F_SUCCESS:
@@ -738,13 +750,13 @@ START_TEST(tcpsock_recvfrom_small)
     mocksrv_do_listen(F_SUCCESS);
     ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
     mocksrv_do_permit();
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, F_SUCCESS);
     ret = turn_recvfrom(tsock, buf, sizeof(buf), NULL, 0);
 
     /* Read tiny data */
     for (i = 0; i < 10; i++) {
         len = rand() & 0xFF;
-        mocksrv_do_recv(len, 1, fuzzes[_i]);
+        mocksrv_do_recv(len, CHAN_1, fuzzes[_i]);
         ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
         switch (fuzzes[_i]) {
             case F_SUCCESS:
@@ -793,13 +805,13 @@ START_TEST(tcpsock_recvfrom_large)
     mocksrv_do_listen(F_SUCCESS);
     ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
     mocksrv_do_permit();
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, F_SUCCESS);
     ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
 
     /* Read big data */
     for (i = 0; i < 10; i++) {
         len = sizeof(rbuf) + (rand() & 0xFF);
-        mocksrv_do_recv(len, 1, fuzzes[_i]);
+        mocksrv_do_recv(len, CHAN_1, fuzzes[_i]);
         switch (fuzzes[_i]) {
             case F_SUCCESS:
                 tot = 0;
@@ -864,12 +876,12 @@ START_TEST(tcpsock_recvfrom_eof)
     mocksrv_do_listen(F_SUCCESS);
     ret = turn_permit(tsock, (struct sockaddr *) &sina, sizeof(sina));
     mocksrv_do_permit();
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, F_SUCCESS);
     ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
 
     for (i = 0; i < 10; i++) {
         len = sizeof(rbuf) + (rand() & 0xFF);
-        mocksrv_do_recv(len, 1, F_SUCCESS);
+        mocksrv_do_recv(len, CHAN_1, F_SUCCESS);
         mocksrv_do_shut((struct sockaddr *) &sina, sizeof(sina), 1, fuzzes[_i]);
 
         tot = 0;
@@ -929,7 +941,7 @@ START_TEST(tcpsock_sendto_small)
     mocksrv_do_permit();
 
     sina.sin_port = rand();
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, F_SUCCESS);
     ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
 
     /* Read tiny data */
@@ -985,7 +997,7 @@ START_TEST(tcpsock_shutdown)
     mocksrv_do_permit();
 
     sina.sin_port = rand();
-    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), 1, F_SUCCESS);
+    mocksrv_do_accept((struct sockaddr *) &sina, sizeof(sina), CHAN_1, F_SUCCESS);
     ret = turn_recvfrom(tsock, buf, sizeof(buf), (struct sockaddr *) &sinb, &blen);
 
     switch (_i) {

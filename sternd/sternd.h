@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <time.h>
 #include <stdlib.h>
+#include <fcntl.h>
 
 #include <stern/stun.h>
 #include <stern/turn.h>
@@ -37,16 +38,23 @@
 
 #define CLIENT_TIMEOUT 120
 
+struct stun_client;
+struct stun_server;
+struct turn_client;
+struct turn_server;
+struct sternd;
+
 struct stun_clientstate_tcp {
     int sock;
     struct event ev_read, ev_write;
-    struct buffer request, response;
+    struct buffer wbuf, rbuf;
 };
 
 struct stun_clientstate_udp {
 };
 
 struct stun_client {
+    struct stun_server *server;
     struct sockaddr addr;
     union {
         struct stun_clientstate_tcp tcp;
@@ -64,7 +72,9 @@ struct stun_serverstate_udp {
 };
 
 struct stun_server {
+    struct sternd *sternd;
     int sock;
+    int protocol;
     struct sockaddr addr;
     union {
         struct stun_serverstate_tcp tcp;
@@ -73,8 +83,74 @@ struct stun_server {
     LIST_HEAD(stun_clients, stun_client) clients;
 };
 
+struct turn_clientstate_tcp {
+    int sock;
+    struct buffer wbuf, rbuf;
+    struct event ev_read, ev_write;
+};
+
+struct turn_channelstate_tcp {
+    int sock;
+    int shut_rd, shut_rd_pending, shut_wr, shut_wr_pending;
+    struct buffer wbuf, rbuf;
+    struct event ev_read, ev_write;
+};
+
+struct turn_permission {
+    struct turn_client *client;
+    struct sockaddr addr;
+    LIST_ENTRY(turn_permission) entries;
+};
+
+struct turn_channel {
+    struct turn_client *client;
+    int protocol;
+    struct sockaddr addr;
+    socklen_t slen;
+    int num_client, num_self;
+    int confirmed_by_self, confirmed_by_client;
+    struct turn_permission *permission;
+    union {
+        struct turn_channelstate_tcp tcp;
+    } s;
+    LIST_ENTRY(turn_channel) entries;
+};
+
+struct turn_client {
+    struct turn_server *server;
+    struct sockaddr addr;
+    int bandwidth;
+    int peer;
+    int protocol;
+    int num_channels;
+    struct event ev_peer;
+    time_t expires;
+    union {
+        struct turn_clientstate_tcp tcp;
+    } s;
+    LIST_ENTRY(turn_client) entries;
+    LIST_HEAD(turn_channels, turn_channel) channels;
+    LIST_HEAD(turn_permissions, turn_permission) permissions;
+};
+
+struct turn_serverstate_tcp {
+    struct event ev_accept;
+};
+
+struct turn_server {
+    struct sternd *sternd;
+    int protocol;
+    int sock;
+    union {
+        struct turn_serverstate_tcp tcp;
+    } s;
+    LIST_HEAD(turn_clients, turn_client) clients;
+};
+
 struct sternd {
+    struct event_base *base;
     struct stun_server stuntcp, stunudp;
+    struct turn_server turntcp;
 };
 
 extern struct sternd sternd;

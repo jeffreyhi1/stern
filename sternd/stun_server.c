@@ -26,8 +26,8 @@ tcpcli_free(struct stun_client *client)
         close(client->s.tcp.sock);
     event_del(&client->s.tcp.ev_read);
     event_del(&client->s.tcp.ev_write);
-    b_reset(&client->s.tcp.request);
-    b_reset(&client->s.tcp.response);
+    b_reset(&client->s.tcp.wbuf);
+    b_reset(&client->s.tcp.rbuf);
 
     LIST_REMOVE(client, entries);
     s_free(client);
@@ -37,7 +37,7 @@ tcpcli_free(struct stun_client *client)
 static void
 tcpcli_set_events(struct stun_client *client)
 {
-    if (!b_is_empty(&client->s.tcp.response))
+    if (!b_is_empty(&client->s.tcp.wbuf))
         event_add(&client->s.tcp.ev_write, &timeout);
     else
         event_add(&client->s.tcp.ev_read, &timeout);
@@ -45,29 +45,24 @@ tcpcli_set_events(struct stun_client *client)
 
 //------------------------------------------------------------------------------
 static struct stun_message *
-stun_default_responser(struct stun_message *request, struct sockaddr *addr)
+stun_default_responder(struct stun_message *request, struct sockaddr *addr)
 {
     return stun_respond_to(request, addr);
 }
 
 //------------------------------------------------------------------------------
 static void
-client_queue_response(struct stun_client *client, struct stun_message *request)
+tcpcli_queueresponse(struct stun_client *client, struct stun_message *response)
 {
     int ret = 0;
-    struct stun_message *response;
-    struct buffer *wbuf = &client->s.tcp.response;
+    struct buffer *wbuf = &client->s.tcp.wbuf;
 
-    response = stun_default_responser(request, &client->addr);
-    if (response) {
-        do {
-            if (ret == -1)
-                b_grow(wbuf);
-            ret = stun_to_bytes(b_pos_free(wbuf), b_num_free(wbuf), response);
-        } while (ret == -1);
-        b_used_free(wbuf, ret);
-        stun_free(response);
-    }
+    do {
+        if (ret == -1)
+            b_grow(wbuf);
+        ret = stun_to_bytes(b_pos_free(wbuf), b_num_free(wbuf), response);
+    } while (ret == -1);
+    b_used_free(wbuf, ret);
 }
 
 //------------------------------------------------------------------------------
@@ -76,8 +71,8 @@ tcpcli_process_requests(struct stun_client *client)
 {
     int processed;
     size_t rlen;
-    struct stun_message *request;
-    struct buffer *rbuf = &client->s.tcp.request;
+    struct stun_message *request, *response;
+    struct buffer *rbuf = &client->s.tcp.rbuf;
 
     do {
         processed = 0;
@@ -85,9 +80,13 @@ tcpcli_process_requests(struct stun_client *client)
         request = stun_from_bytes(b_pos_avail(rbuf), &rlen);
         if (request) {
             processed = 1;
-            client_queue_response(client, request);
-            stun_free(request);
             b_used_avail(rbuf, rlen);
+            response = stun_default_responder(request, &client->addr);
+            if (response) {
+                tcpcli_queueresponse(client, response);
+                stun_free(response);
+            }
+            stun_free(request);
         }
     } while (processed);
 }
@@ -98,7 +97,7 @@ tcpcli_recv(struct stun_client *client)
 {
     int ret;
 
-    ret = b_recv(&client->s.tcp.request, client->s.tcp.sock, 0, MSG_DONTWAIT);
+    ret = b_recv(&client->s.tcp.rbuf, client->s.tcp.sock, 0, MSG_DONTWAIT);
     return (ret <= 0) ? -1 : 0;
 }
 
@@ -123,7 +122,7 @@ tcpcli_send(struct stun_client *client)
 {
     int ret;
 
-    ret = b_send(&client->s.tcp.response, client->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
+    ret = b_send(&client->s.tcp.wbuf, client->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
     return (ret <= 0) ? -1 : 0;
 }
 
@@ -143,18 +142,20 @@ stuntcpcli_send(int fd, short ev, void *arg)
 
 //------------------------------------------------------------------------------
 static struct stun_client *
-stuntcp_newclient(int fd, struct sockaddr *addr, struct sternd *sternd)
+stuntcp_newclient(int fd, struct sockaddr *addr, struct stun_server *server)
 {
     struct stun_client *client;
 
     client = s_malloc(sizeof(struct stun_client));
     memset(client, 0, sizeof(struct stun_client));
-    LIST_INSERT_HEAD(&sternd->stuntcp.clients, client, entries);
+    LIST_INSERT_HEAD(&server->clients, client, entries);
     client->s.tcp.sock = fd;
     if (addr)
         client->addr = *addr;
     event_set(&client->s.tcp.ev_read, fd, EV_READ, stuntcpcli_read, client);
     event_set(&client->s.tcp.ev_write, fd, EV_WRITE, stuntcpcli_send, client);
+    event_base_set(server->sternd->base, &client->s.tcp.ev_read);
+    event_base_set(server->sternd->base, &client->s.tcp.ev_write);
     tcpcli_set_events(client);
     return client;
 }
@@ -163,7 +164,7 @@ stuntcp_newclient(int fd, struct sockaddr *addr, struct sternd *sternd)
 static void
 stuntcp_accept(int fd, short ev, void *arg)
 {
-    struct sternd *sternd = (struct sternd *) arg;
+    struct stun_server *server = (struct stun_server *) arg;
     struct stun_client *client;
     struct sockaddr addr;
     socklen_t len = sizeof(addr);
@@ -172,7 +173,7 @@ stuntcp_accept(int fd, short ev, void *arg)
     cli = accept(fd, &addr, &len);
     if (cli == -1)
         return;
-    client = stuntcp_newclient(cli, &addr, sternd);
+    client = stuntcp_newclient(cli, &addr, server);
     if (!client)
         close(cli);
 }
@@ -181,7 +182,7 @@ stuntcp_accept(int fd, short ev, void *arg)
 static void
 stunudp_recv(int fd, short ev, void *arg)
 {
-    struct sternd *sternd = (struct sternd *) arg;
+    struct stun_server *server = (struct stun_server *) arg;
     struct stun_message *request, *response;
     struct sockaddr addr;
     socklen_t len = sizeof(addr);
@@ -196,7 +197,7 @@ stunudp_recv(int fd, short ev, void *arg)
     len = ret;
     request = stun_from_bytes(buf, &len);
     if (request) {
-        response = stun_respond_to(request, &addr);
+        response = stun_default_responder(request, &addr);
         if (response) {
             ret = stun_to_bytes(buf, sizeof(buf), response);
             if (ret > 0)
@@ -230,7 +231,8 @@ sternd_set_stun_socket(int transport, int socket, int port)
         }
         sternd.stuntcp.sock = socket;
         listen(socket, 5);
-        event_set(&sternd.stuntcp.s.tcp.ev_accept, socket, EV_READ | EV_PERSIST, stuntcp_accept, &sternd);
+        event_set(&sternd.stuntcp.s.tcp.ev_accept, socket, EV_READ | EV_PERSIST, stuntcp_accept, &sternd.stuntcp);
+        event_base_set(sternd.base, &sternd.stuntcp.s.tcp.ev_accept);
         event_add(&sternd.stuntcp.s.tcp.ev_accept, NULL);
         return 0;
     } else if (transport == IPPROTO_UDP) {
@@ -239,7 +241,8 @@ sternd_set_stun_socket(int transport, int socket, int port)
             event_del(&sternd.stuntcp.s.udp.ev_recv);
         }
         sternd.stunudp.sock = socket;
-        event_set(&sternd.stunudp.s.udp.ev_recv, socket, EV_READ|EV_PERSIST, stunudp_recv, &sternd);
+        event_set(&sternd.stunudp.s.udp.ev_recv, socket, EV_READ|EV_PERSIST, stunudp_recv, &sternd.stunudp);
+        event_base_set(sternd.base, &sternd.stunudp.s.udp.ev_recv);
         event_add(&sternd.stunudp.s.udp.ev_recv, NULL);
         return 0;
     } else {
@@ -248,12 +251,9 @@ sternd_set_stun_socket(int transport, int socket, int port)
 }
 
 //------------------------------------------------------------------------------
-int
+void
 sternd_stun_quit()
 {
-    struct stun_client *client;
-
-
     while (LIST_FIRST(&sternd.stuntcp.clients) != NULL) {
         tcpcli_free(LIST_FIRST(&sternd.stuntcp.clients));
     }
@@ -272,7 +272,7 @@ sternd_stun_quit()
 }
 
 //------------------------------------------------------------------------------
-int
+void
 sternd_set_stun_timeout(int s, int us)
 {
     timeout.tv_sec = s;

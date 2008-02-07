@@ -26,108 +26,59 @@ struct tag {
 };
 #pragma pack(pop)
 
-enum state {
-    MUX_WAITING_FOR_DATA,
-    MUX_SPLICING_TO_CLIENT_READING,
-    MUX_SPLICING_TO_CLIENT_WRITING_TAG,
-    MUX_SPLICING_TO_CLIENT_WRITING_DATA,
-    MUX_SPLICING_FROM_CLIENT_READING_TAG,
-    MUX_SPLICING_FROM_CLIENT_READING_DATA,
-    MUX_SPLICING_FROM_CLIENT_WRITING
-};
+static void turntcp_acceptpeer(int fd, short ev, void *arg);
+static void turnudp_recvpeer(int fd, short ev, void *arg);
+static void turntcpchan_read(int fd, short ev, void *arg);
+static void turntcpchan_send(int fd, short ev, void *arg);
+static void tcpchan_set_events(struct turn_channel *channel);
 
-struct server {
-    int sock;
-    struct event ev_accept;
-};
+#if 0
+//------------------------------------------------------------------------------
+static void
+on_peer_shutrd(struct channel *channel)
+{
+    struct sockaddr addr;
+    socklen_t len = sizeof(addr);
 
-struct client;
-
-struct permission {
-    struct sockaddr  addr;           /* Peer address                                */
-};
-
-struct channel {
-    int                clnt_confirm;   /* Whether client has confirmed our number   */
-    int                num_clnt;       /* Number as per client                      */
-    int                num_self;       /* Number of this permission                 */
-    int                peer;           /* Peer socket (TCP only)                    */
-    int                self_confirm;   /* Whether we have confirmed client's number */
-    struct client     *client;         /* Client allocation this channel is for     */
-    struct event      *ev_peerread;    /* Peer sent data (TCP only)                 */
-    struct event      *ev_peerwrite;   /* Can write to peer (TCP only)              */
-    struct permission *perm;           /* Permission this channel was created under */
-};
-
-struct client {
-    enum state          state;           /* Current forwarding state                    */
-    int                 bandwidth;       /* Bandwidth for allocation                    */
-    int                 clnt;            /* Client socket                               */
-    int                 nchannels;       /* Number of channels/permissions              */
-    int                 nperms;          /* Number of channels/permissions              */
-    int                 need_maintain;   /* Need to perform periodic maintainance       */
-    int                 peer;            /* Peer socket for UDP, Listen socket for TCP  */
-    int                 protocol;        /* IP protocol to client UDP or TCP            */
-    size_t              len;             /* Number of bytes to write/read               */
-    size_t              pos;             /* Number of bytes written/read so far         */
-    struct channel    **channels;        /* Channels                                    */
-    struct event       *ev_cliread;      /* Client sent data                            */
-    struct event       *ev_cliwrite;     /* Can write to client (TCP only)              */
-    struct event       *ev_peerread;     /* Peer sent data (UDP), Can accept peer (TCP) */
-    struct channel     *out_channel;     /* Channel to write to (TCP only)              */
-    struct permission **perms;           /* Permissions                                 */
-    struct server      *server;          /* Server that accepted client socket          */
-    struct sockaddr     addr;            /* Client reflexive address                    */
-    struct tag          tag;             /* Tag for current read/write to client        */
-    time_t              expires;         /* Time this allocation expires                */
-    void               *buf;             /* Buffer with data for current read/write     */
-};
-
-static void on_peer_accept(int fd, short ev, void *arg);
-static void on_peer_read(int fd, short ev, void *arg);
-static void on_peer_recvfrom(int fd, short ev, void *arg);
-static void on_peer_error(struct channel *channel);
-static void on_peer_write(int fd, short ev, void *arg);
-static void on_client_write(int fd, short ev, void *arg);
+    event_del(channel->ev_peerread);
+    s_free(channel->ev_peerread);
+    channel->ev_peerread = NULL;
+    getsockname(channel->peer, &addr, &len);
+    channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_CLOSED);
+}
+#endif
 
 //------------------------------------------------------------------------------
 static int
-turnreq_allocate_bind(struct client *client, struct stun_message *request, struct sockaddr *addr, socklen_t len)
+turnchan_getid(struct turn_client *client)
 {
-    int fd;
+    int chan, i, tries = 10;
+    struct turn_channel *channel;
 
-    if (request->requested_transport == TURN_TRANSPORT_UDP) {
-        fd = socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
-        if (bind(fd, addr, len) == -1) {
-            close(fd);
+    do {
+        chan = rand() & 0xFFFF;
+        chan |= ((rand() + 1) & 0x3) << 14;
+        if (--tries == 0)
             return -1;
+        for (channel = LIST_FIRST(&client->channels); channel;
+             channel = LIST_NEXT(channel, entries)) {
+            if (channel->num_self == chan)
+                break;
         }
-        client->protocol = IPPROTO_UDP;
-        client->ev_peerread = (struct event *) s_malloc(sizeof(struct event));
-        event_set(client->ev_peerread, client->peer, EV_READ, on_peer_recvfrom, client);
-    } else if (request->requested_transport == TURN_TRANSPORT_TCP) {
-        fd = socket(addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
-        if (bind(fd, addr, len) == -1) {
-            close(fd);
-            return -1;
-        }
-        client->protocol = IPPROTO_TCP;
-    } else {
-        return -1;
-    }
-    client->peer = fd;
-    return 0;
+    } while (channel != NULL);
+
+    return chan;
 }
 
 //------------------------------------------------------------------------------
 static void
-turnresp_add_lifetime(struct stun_message * response, struct client *client)
+turnresp_add_lifetime(struct stun_message * response, struct turn_client *client)
 {
     response->lifetime = client->expires - time(NULL);
 }
 
 //------------------------------------------------------------------------------
-void turnresp_add_relay_address(struct stun_message *response, struct client *client)
+void turnresp_add_relay_address(struct stun_message *response, struct turn_client *client)
 {
     struct sockaddr addr;
     socklen_t len;
@@ -139,21 +90,21 @@ void turnresp_add_relay_address(struct stun_message *response, struct client *cl
 
 //------------------------------------------------------------------------------
 static void
-turnresp_add_bandwidth(struct stun_message * response, struct client *client)
+turnresp_add_bandwidth(struct stun_message * response, struct turn_client *client)
 {
     response->bandwidth = client->bandwidth;
 }
 
 //------------------------------------------------------------------------------
 static void
-turnresp_add_xor_mapped_address(struct stun_message * response, struct client *client)
+turnresp_add_xor_mapped_address(struct stun_message * response, struct turn_client *client)
 {
     stun_set_xor_mapped_address(response, &client->addr, sizeof(client->addr));
 }
 
 //------------------------------------------------------------------------------
 static struct stun_message *
-turnreq_allocate_respond(struct stun_message *request, struct client *client)
+turnreq_allocate_respond(struct stun_message *request, struct turn_client *client)
 {
     struct stun_message *response;
 
@@ -167,7 +118,7 @@ turnreq_allocate_respond(struct stun_message *request, struct client *client)
 
 //------------------------------------------------------------------------------
 static int
-turnreq_allocate_req_ip_port(struct client *client, struct stun_message *request, struct sockaddr *addr)
+turnreq_allocate_req_ip_port(struct turn_client *client, struct stun_message *request, struct sockaddr *addr)
 {
     struct sockaddr_in *sin = (struct sockaddr_in *) addr;
     // struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *) addr;
@@ -182,10 +133,45 @@ turnreq_allocate_req_ip_port(struct client *client, struct stun_message *request
 }
 
 //------------------------------------------------------------------------------
+static int
+turnreq_allocate_bind(struct turn_client *client, struct stun_message *request, struct sockaddr *addr, socklen_t len)
+{
+    int fd;
+
+    if (request->requested_transport == TURN_TRANSPORT_UDP) {
+        fd = socket(addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
+    } else if (request->requested_transport == TURN_TRANSPORT_TCP) {
+        fd = socket(addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
+    } else {
+        return -1;
+    }
+
+    if (bind(fd, addr, len) == -1) {
+        close(fd);
+        return -1;
+    }
+
+    client->peer = fd;
+    if (request->requested_transport == TURN_TRANSPORT_UDP) {
+        client->protocol = IPPROTO_UDP;
+        event_set(&client->ev_peer, fd, EV_READ, turnudp_recvpeer, client);
+    } else if (request->requested_transport == TURN_TRANSPORT_TCP) {
+        client->protocol = IPPROTO_TCP;
+        event_set(&client->ev_peer, fd, EV_READ, turntcp_acceptpeer, client);
+    }
+    event_base_set(client->server->sternd->base, &client->ev_peer);
+
+    return 0;
+}
+
+//------------------------------------------------------------------------------
 static struct stun_message *
-turnreq_allocate(struct stun_message *request, struct client *client)
+turnreq_allocate(struct stun_message *request, struct turn_client *client)
 {
     struct sockaddr addr;
+
+    if (client->peer != -1)
+        return NULL;
 
     if (turnreq_allocate_req_ip_port(client, request, &addr) == -1
         || turnreq_allocate_bind(client, request, &addr, sizeof(addr)) == -1)
@@ -199,7 +185,7 @@ turnreq_allocate(struct stun_message *request, struct client *client)
 
 //------------------------------------------------------------------------------
 static struct stun_message *
-turnreq_listen(struct stun_message *request, struct client *client)
+turnreq_listen(struct stun_message *request, struct turn_client *client)
 {
     struct stun_message *response;
     int ret;
@@ -207,224 +193,300 @@ turnreq_listen(struct stun_message *request, struct client *client)
     if (client->peer == -1 || client->protocol != IPPROTO_TCP)
         return NULL;
 
-    ret = listen(client->peer, 2);
+    ret = listen(client->peer, 5);
     if (ret == -1) {
         response = stun_init_response(TURN_LISTEN_ERROR, request);
         response->error_code = 445;
         return response;
     }
-    client->ev_peerread = (struct event *) s_malloc(sizeof(struct event));
-    event_set(client->ev_peerread, client->peer, EV_READ, on_peer_accept, client);
+    event_add(&client->ev_peer, NULL);
 
     response = stun_init_response(TURN_LISTEN_SUCCESS, request);
     turnresp_add_lifetime(response, client);
     return response;
 }
 
-
 //------------------------------------------------------------------------------
-static int
-channel_find_unused(struct client *client)
+static struct turn_channel *
+tcpchan_find(struct turn_client *client, int chan, struct sockaddr *addr)
 {
-    int chan, i, tries = 10;
-
-    do {
-        do {
-            chan = rand() & 0xFFFF;
-        } while (chan == 0);
-        if (--tries == 0)
-            return -1;
-        for (i = 0; i < client->nchannels; i++)
-            if (client->channels[i]->num_self == chan)
-                break;
-    } while (i < client->nchannels);
-
-    return chan;
-}
-
-//------------------------------------------------------------------------------
-static struct permission *
-perm_new(struct client *client, struct sockaddr *addr)
-{
-    struct permission *perm = NULL;
-
-    client->perms = (struct permission **) s_realloc(
-            client->perms,
-            (++client->nperms) * sizeof(struct permission *));
-    perm = (struct permission *) s_malloc(sizeof(struct permission));
-    client->perms[client->nperms - 1] = perm;
-
-    memcpy(&perm->addr, addr,
-           addr->sa_family == AF_INET ? sizeof(struct sockaddr_in)
-           : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6)
-           : sizeof(struct sockaddr));
-    return perm;
-}
-
-//------------------------------------------------------------------------------
-static struct channel *
-channel_new(struct client *client, struct permission *perm)
-{
-    struct channel *channel = NULL;
-    int chan;
-
-    chan = channel_find_unused(client);
-    if (chan == -1) return NULL;
-
-    client->channels = (struct channel **) s_realloc(
-            client->channels,
-            (++client->nchannels) * sizeof(struct channel *));
-    channel = (struct channel *) s_malloc(sizeof(struct channel));
-    client->channels[client->nchannels - 1] = channel;
-
-    memset(channel, 0, sizeof(struct channel));
-    channel->num_self = chan;
-    channel->client = client;
-    channel->peer = -1;
-    channel->perm = perm;
-    return channel;
-}
-
-//------------------------------------------------------------------------------
-static int
-sockaddr_matches_addr(struct sockaddr *addr1, struct sockaddr *addr2)
-{
-    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
-    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
-    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
-    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
-
-    return (addr1->sa_family == addr2->sa_family
-            && ((addr1->sa_family == AF_INET
-                 && sina->sin_addr.s_addr == sinb->sin_addr.s_addr)
-                || (addr1->sa_family == AF_INET6
-                    && memcmp(sin6a->sin6_addr.s6_addr,
-                              sin6b->sin6_addr.s6_addr,
-                              16) == 0)));
-}
-
-//------------------------------------------------------------------------------
-static int
-sockaddr_matches(struct sockaddr *addr1, struct sockaddr *addr2)
-{
-    struct sockaddr_in *sina = (struct sockaddr_in *) addr1;
-    struct sockaddr_in6 *sin6a = (struct sockaddr_in6 *) addr1;
-    struct sockaddr_in *sinb = (struct sockaddr_in *) addr2;
-    struct sockaddr_in6 *sin6b = (struct sockaddr_in6 *) addr2;
-
-    return (addr1->sa_family == addr2->sa_family
-            && ((addr1->sa_family == AF_INET
-                 && sina->sin_addr.s_addr == sinb->sin_addr.s_addr
-                 && sina->sin_port == sinb->sin_port)
-                || (addr1->sa_family == AF_INET6
-                    && memcmp(sin6a->sin6_addr.s6_addr,
-                              sin6b->sin6_addr.s6_addr,
-                              16) == 0
-                    && sin6a->sin6_port == sin6b->sin6_port)));
-}
-
-//------------------------------------------------------------------------------
-static struct channel *
-channel_get(struct client *client, struct permission *perm, struct sockaddr *addr)
-{
-    struct channel *channel;
+    struct turn_channel *channel;
     struct sockaddr saddr;
     socklen_t slen;
-    int i;
 
-    if (client->protocol == IPPROTO_TCP) {
-        for (i = 0; i < client->nchannels; i++) {
-            channel = client->channels[i];
+    if (chan != -1) {
+        for (channel = LIST_FIRST(&client->channels); channel;
+             channel = LIST_NEXT(channel, entries)) {
+            if (channel->num_client == chan)
+                return channel;
+        }
+    }
+
+    if (addr != NULL) {
+        for (channel = LIST_FIRST(&client->channels); channel;
+             channel = LIST_NEXT(channel, entries)) {
             slen = sizeof(saddr);
-            getpeername(channel->peer, &saddr, &slen);
+            getpeername(channel->s.tcp.sock, &saddr, &slen);
             if (sockaddr_matches(addr, &saddr))
                 return channel;
         }
     }
-    for (i = 0; i < client->nchannels; i++) {
-        channel = client->channels[i];
-        if (channel->perm == perm)
-            return channel;
-    }
-    return channel_new(client, perm);
-}
-
-//------------------------------------------------------------------------------
-static struct permission *
-perm_get(struct client *client, struct sockaddr *addr)
-{
-    struct permission *perm;
-    int i;
-
-    for (i = 0; i < client->nperms; i++) {
-        perm = client->perms[i];
-        if (sockaddr_matches_addr(addr, &perm->addr))
-            return perm;
-    }
-    return perm_new(client, addr);
+    return NULL;
 }
 
 //------------------------------------------------------------------------------
 static void
-turnind_send_queue_data(struct client *client, struct channel *channel,
-                        struct stun_message *request)
+turnind_connstat(struct stun_message *request, struct turn_client *client)
 {
-    if (client->buf)
-        s_free(client->buf);
-    client->buf = request->data;
-    client->len = request->data_len;
-    client->pos = 0;
-    request->data = NULL;
-    request->data_len = 0;
-
-    client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
-    client->out_channel = channel;
-}
-
-//------------------------------------------------------------------------------
-static void
-turnind_send(struct stun_message *request, struct client *client)
-{
-    struct permission *perm;
-    struct channel *channel;
+    struct turn_channel *channel;
 
     if (!request->peer_address)
         return;
 
-    perm = perm_get(client, request->peer_address);
-    if (perm == NULL) return;
-
-    if (request->data) {
-        channel = channel_get(client, perm, request->peer_address);
-        if (channel == NULL) return;
-        channel->num_clnt = request->channel;
-        channel->perm = perm;
-        turnind_send_queue_data(client, channel, request);
-        return;
-    }
-}
-
-//------------------------------------------------------------------------------
-static void
-turnind_connstat(struct stun_message *request, struct client *client)
-{
-    struct channel *channel;
-
-    if (!request->peer_address)
-        return;
-
-    channel = channel_get(client, NULL, request->peer_address);
+    channel = tcpchan_find(client, -1, request->peer_address);
     if (channel == NULL) return;
 
     if (request->connect_status == TURN_CONNSTAT_CLOSED) {
-        on_peer_error(channel);
+        channel->s.tcp.shut_wr_pending = 1;
+        if (!channel->s.tcp.shut_wr)
+            event_add(&channel->s.tcp.ev_write, NULL);
+    }
+}
+
+//------------------------------------------------------------------------------
+static void
+turnind_send_queue_data(struct turn_client *client, struct turn_channel *channel,
+                        struct stun_message *request)
+{
+    if (channel->s.tcp.shut_wr || channel->s.tcp.shut_wr_pending)
         return;
+
+    if (channel->protocol == IPPROTO_TCP) {
+        while (b_num_free(&channel->s.tcp.wbuf) < request->data_len)
+            b_grow(&channel->s.tcp.wbuf);
+        memcpy(b_pos_free(&channel->s.tcp.wbuf), request->data, request->data_len);
+        b_used_free(&channel->s.tcp.wbuf, request->data_len);
+        tcpchan_set_events(channel);
+    } else {
+        assert(0);
+    }
+}
+
+//------------------------------------------------------------------------------
+static struct turn_permission *
+tcpperm_new(struct turn_client *client, struct sockaddr *addr, socklen_t len)
+{
+    struct turn_permission *perm = NULL;
+
+    perm = (struct turn_permission *) s_malloc(sizeof(struct turn_permission));
+    LIST_INSERT_HEAD(&client->permissions, perm, entries);
+
+    perm->client = client;
+    memcpy(&perm->addr, addr, len);
+    return perm;
+}
+
+//------------------------------------------------------------------------------
+static struct turn_permission *
+turnperm_find(struct turn_client *client, struct sockaddr *addr, socklen_t len)
+{
+    struct turn_permission *perm;
+
+    for (perm = LIST_FIRST(&client->permissions); perm; perm = LIST_NEXT(perm, entries)) {
+        if (sockaddr_matches_addr(addr, &perm->addr))
+            return perm;
+    }
+    return NULL;
+}
+
+//------------------------------------------------------------------------------
+static int
+set_nonblocking(int fd)
+{
+    int flags;
+
+    if ((flags = fcntl(fd, F_GETFL, 0)) == -1
+        || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+        return -1;
+    return 0;
+}
+
+//------------------------------------------------------------------------------
+static struct turn_channel *
+turntcp_newchannel(int fd, struct sockaddr *addr, socklen_t len, struct turn_client *client)
+{
+    int chan;
+    struct turn_channel *channel;
+
+    chan = turnchan_getid(client);
+    if (chan == -1)
+        return NULL;
+
+    channel = s_malloc(sizeof(struct turn_channel));
+    memset(channel, 0, sizeof(struct turn_channel));
+    LIST_INSERT_HEAD(&client->channels, channel, entries);
+    channel->s.tcp.sock = fd;
+    channel->num_self = chan;
+    channel->client = client;
+    channel->protocol = IPPROTO_TCP;
+    if (addr) {
+        channel->addr = *addr;
+        channel->slen = len;
+    }
+    event_set(&channel->s.tcp.ev_read, fd, EV_READ, turntcpchan_read, channel);
+    event_set(&channel->s.tcp.ev_write, fd, EV_WRITE, turntcpchan_send, channel);
+    event_base_set(client->server->sternd->base, &channel->s.tcp.ev_read);
+    event_base_set(client->server->sternd->base, &channel->s.tcp.ev_write);
+    tcpchan_set_events(channel);
+    return channel;
+}
+
+//------------------------------------------------------------------------------
+static struct turn_channel *
+turntcp_connect(struct stun_message *request, struct turn_client *client, struct turn_permission *perm)
+{
+    int fd, ret;
+    struct turn_channel *channel;
+
+    fd = socket(request->peer_address->sa_family, SOCK_STREAM, IPPROTO_TCP);
+    if (fd == -1)
+        return NULL;
+    set_nonblocking(fd);
+    ret = connect(fd, request->peer_address, request->peer_address_len);
+    if (ret == -1 && errno != EINPROGRESS) {
+        close(fd);
+        return NULL;
+    }
+    channel = turntcp_newchannel(fd, request->peer_address, request->peer_address_len, client);
+    if (channel == NULL) {
+        close(fd);
+        return NULL;
+    }
+    channel->permission = perm;
+    channel->num_client = request->channel;
+    return channel;
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpcli_set_events(struct turn_client *client)
+{
+    if (b_num_avail(&client->s.tcp.wbuf))
+        event_add(&client->s.tcp.ev_write, NULL);
+    event_add(&client->s.tcp.ev_read, NULL);
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpcli_queueresponse(struct turn_client *client, struct stun_message *response)
+{
+    int ret = 0;
+    struct buffer *wbuf = &client->s.tcp.wbuf;
+
+    do {
+        if (ret == -1)
+            b_grow(wbuf);
+        ret = stun_to_bytes(b_pos_free(wbuf), b_num_free(wbuf), response);
+    } while (ret == -1);
+    b_used_free(wbuf, ret);
+    tcpcli_set_events(client);
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpchan_process_requests(struct turn_channel *channel)
+{
+    struct turn_client *client = channel->client;
+    struct stun_message *stun;
+    struct buffer *rbuf = &channel->s.tcp.rbuf;
+    struct tag *tag;
+    size_t rlen, dlen;
+
+    rlen = b_num_avail(rbuf);
+    if (rlen == 0) return;
+    if (channel->confirmed_by_client) {
+        dlen = rlen + TURN_TAGLEN;
+        while (b_num_free(&client->s.tcp.wbuf) < dlen)
+            b_grow(&client->s.tcp.wbuf);
+        tag = (struct tag *) b_pos_free(&client->s.tcp.wbuf);
+        tag->channel = htons(channel->num_self);
+        tag->length = htons(rlen);
+        memcpy(b_pos_free(&client->s.tcp.wbuf) + TURN_TAGLEN, b_pos_avail(&channel->s.tcp.rbuf), rlen);
+        b_used_free(&client->s.tcp.wbuf, dlen);
+        tcpcli_set_events(client);
+    } else {
+        stun = stun_new(TURN_SEND_INDICATION);
+        stun_set_peer_address(stun, &channel->addr, channel->slen);
+        stun_set_data(stun, b_pos_avail(&channel->s.tcp.rbuf), rlen);
+        stun->channel = channel->num_self;
+        tcpcli_queueresponse(client, stun);
+        stun_free(stun);
+    }
+    b_used_avail(&channel->s.tcp.rbuf, rlen);
+}
+
+//------------------------------------------------------------------------------
+static void
+turnind_send_connstat(struct turn_channel *channel, struct sockaddr *addr, socklen_t len, int status)
+{
+    struct turn_client *client = channel->client;
+    struct stun_message *stun;
+
+    stun = stun_new(TURN_CHAN_CONF_INDICATION);
+    stun_set_peer_address(stun, addr, len);
+    stun->channel = channel->num_self;
+    if (status != -1)
+        stun->connect_status = status;
+    channel->confirmed_by_self = 1;
+    if (client->server->protocol == IPPROTO_TCP)
+        channel->confirmed_by_client = 1;
+    tcpcli_queueresponse(client, stun);
+    stun_free(stun);
+}
+
+//------------------------------------------------------------------------------
+static void
+turnind_send(struct stun_message *request, struct turn_client *client)
+{
+    struct turn_permission *perm;
+    struct turn_channel *channel;
+    struct sockaddr *addr;
+    socklen_t len;
+
+    if (!request->peer_address)
+        return;
+    addr = request->peer_address;
+    len = request->peer_address_len;
+
+    perm = turnperm_find(client, addr, len);
+    if (perm == NULL)
+        perm = tcpperm_new(client, addr, len);
+    if (perm == NULL)
+        return;
+
+    if (request->data) {
+        channel = tcpchan_find(client, -1, addr);
+        if (channel == NULL) {
+            if (client->protocol == TURN_TRANSPORT_TCP)
+                channel = turntcp_connect(request, client, perm);
+            else
+                assert(0);
+        }
+        if (channel == NULL) return;
+        channel->num_client = request->channel;
+        turnind_send_connstat(channel, addr, len, TURN_CONNSTAT_ESTABLISHED);
+        turnind_send_queue_data(client, channel, request);
+    } else {
+        channel = tcpchan_find(client, -1, addr);
+        if (channel == NULL) return;
+        channel->num_client = request->channel;
+        turnind_send_connstat(channel, addr, len, -1);
     }
 }
 
 //------------------------------------------------------------------------------
 static struct stun_message *
-turn_stun_responder(struct stun_message *request, struct client *client)
+turn_default_responder(struct stun_message *request, struct turn_client *client)
 {
     struct stun_message *response = NULL;
 
@@ -444,641 +506,395 @@ turn_stun_responder(struct stun_message *request, struct client *client)
     if (response == NULL && IS_REQUEST(request->message_type)) {
         response = stun_init_response(request->message_type | STUN_ERROR, request);
         response->error_code = stun_cannot_comprehend(request) ? 420 : 400;
-        return response;
     }
 
     return response;
 }
 
 //------------------------------------------------------------------------------
-static void
-client_clear_read_events(struct client *client)
+static int
+tcpcli_process_stun_request(struct turn_client *client)
 {
-    int i;
+    struct stun_message *request, *response;
+    struct buffer *rbuf = &client->s.tcp.rbuf;
+    size_t rlen;
 
-    event_del(client->ev_cliread);
-    if (client->ev_peerread)
-        event_del(client->ev_peerread);
-    for(i = 0; i < client->nchannels; i++)
-        if (client->channels[i]->ev_peerread)
-            event_del(client->channels[i]->ev_peerread);
+    rlen = b_num_avail(rbuf);
+    request = stun_from_bytes(b_pos_avail(rbuf), &rlen);
+    if (request) {
+        response = turn_default_responder(request, client);
+        if (response) {
+            tcpcli_queueresponse(client, response);
+            stun_free(response);
+        }
+        stun_free(request);
+        b_used_avail(rbuf, rlen);
+        return 1;
+    }
+    return 0;
+}
+
+//------------------------------------------------------------------------------
+static int
+tcpcli_process_raw_frame(struct turn_client *client)
+{
+    struct buffer *rbuf = &client->s.tcp.rbuf;
+    struct turn_channel *channel;
+    size_t dlen;
+    struct tag *tag;
+
+    tag = (struct tag *) b_pos_avail(rbuf);
+    dlen = ntohs(tag->length);
+    if (b_num_avail(rbuf) < TURN_TAGLEN + dlen)
+        return 0;
+    channel = tcpchan_find(client, ntohs(tag->channel), NULL);
+    if (channel && !channel->s.tcp.shut_wr && !channel->s.tcp.shut_wr_pending) {
+        while (b_num_free(&channel->s.tcp.wbuf) < dlen)
+            b_grow(&channel->s.tcp.wbuf);
+        memcpy(b_pos_free(&channel->s.tcp.wbuf), b_pos_avail(rbuf) + TURN_TAGLEN, dlen);
+        b_used_free(&channel->s.tcp.wbuf, dlen);
+        tcpchan_set_events(channel);
+    }
+    b_used_avail(rbuf, TURN_TAGLEN + dlen);
+    return 1;
 }
 
 //------------------------------------------------------------------------------
 static void
-client_set_events(struct client *client)
+tcpcli_process_requests(struct turn_client *client)
 {
-    int i;
+    int processed;
+    struct tag *tag;
+    struct buffer *rbuf = &client->s.tcp.rbuf;
 
-    switch (client->state) {
-        case  MUX_WAITING_FOR_DATA:
-            event_add(client->ev_cliread, NULL);
-            if (client->ev_peerread)
-                event_add(client->ev_peerread, NULL);
-            for (i = 0; i < client->nchannels; i++)
-                if (client->channels[i]->ev_peerread)
-                    event_add(client->channels[i]->ev_peerread, NULL);
-            break;
+    do {
+        if (b_num_avail(rbuf) < TURN_TAGLEN) break;
+        tag = (struct tag *) b_pos_avail(rbuf);
+        if (IS_STUN_CHANNEL(ntohs(tag->channel))) {
+            processed = tcpcli_process_stun_request(client);
+        } else {
+            processed = tcpcli_process_raw_frame(client);
+        }
+    } while (processed);
+}
 
-        case MUX_SPLICING_FROM_CLIENT_READING_TAG:
-        case MUX_SPLICING_FROM_CLIENT_READING_DATA:
-            client_clear_read_events(client);
-            event_add(client->ev_cliread, NULL);
-            break;
-
-        case MUX_SPLICING_FROM_CLIENT_WRITING:
-            client_clear_read_events(client);
-            event_add(client->out_channel->ev_peerwrite, NULL);
-            break;
-
-        case MUX_SPLICING_TO_CLIENT_READING:
-            // Data should have been queued for write. If no data, should
-            // wait for any
-            assert(0);
-            break;
-
-        case MUX_SPLICING_TO_CLIENT_WRITING_TAG:
-        case MUX_SPLICING_TO_CLIENT_WRITING_DATA:
-            client_clear_read_events(client);
-            event_add(client->ev_cliwrite, NULL);
-            break;
-
-        default:
-            assert(0);
+//------------------------------------------------------------------------------
+static void
+tcpchan_shutwr(struct turn_channel *channel)
+{
+    if (!channel->s.tcp.shut_wr) {
+        event_del(&channel->s.tcp.ev_write);
+        b_reset(&channel->s.tcp.wbuf);
+        shutdown(channel->s.tcp.sock, SHUT_WR);
+        channel->s.tcp.shut_wr = 1;
     }
 }
 
 //------------------------------------------------------------------------------
 static void
-on_client_error(struct client *client)
+tcpchan_shutrd(struct turn_channel *channel)
 {
-    int i;
-
-    event_del(client->ev_cliread);
-    event_del(client->ev_cliwrite);
-
-    if (client->ev_peerread)
-        event_del(client->ev_peerread);
-
-    for(i = 0; i < client->nchannels; i++) {
-        if (client->channels[i]->ev_peerread) {
-            event_del(client->channels[i]->ev_peerread);
-            s_free(client->channels[i]->ev_peerread);
-        }
-        if (client->channels[i]->ev_peerwrite) {
-            event_del(client->channels[i]->ev_peerwrite);
-            s_free(client->channels[i]->ev_peerwrite);
-        }
-        if (client->channels[i]->peer != -1)
-            close(client->channels[i]->peer);
-        s_free(client->channels[i]);
+    if (!channel->s.tcp.shut_rd) {
+        turnind_send_connstat(channel, &channel->addr, channel->slen, TURN_CONNSTAT_CLOSED);
+        event_del(&channel->s.tcp.ev_read);
+        b_reset(&channel->s.tcp.rbuf);
+        shutdown(channel->s.tcp.sock, SHUT_RD);
+        channel->s.tcp.shut_rd = 1;
     }
-    for(i = 0; i < client->nperms; i++)
-        s_free(client->perms[i]);
+}
 
-    close(client->clnt);
+//------------------------------------------------------------------------------
+static void
+tcpchan_close(struct turn_channel *channel)
+{
+    if (channel->s.tcp.sock != -1) {
+        tcpchan_shutwr(channel);
+        tcpchan_shutrd(channel);
+        close(channel->s.tcp.sock);
+        channel->s.tcp.sock = -1;
+    }
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpchan_free(struct turn_channel *channel)
+{
+    tcpchan_close(channel);
+    LIST_REMOVE(channel, entries);
+    s_free(channel);
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpchan_set_events(struct turn_channel *channel)
+{
+    if (!channel->s.tcp.shut_wr && !b_is_empty(&channel->s.tcp.wbuf))
+        event_add(&channel->s.tcp.ev_write, NULL);
+    if (!channel->s.tcp.shut_rd)
+        event_add(&channel->s.tcp.ev_read, NULL);
+}
+
+//------------------------------------------------------------------------------
+static int
+tcpchan_recv(struct turn_channel *channel)
+{
+    int ret;
+
+    ret = b_recv(&channel->s.tcp.rbuf, channel->s.tcp.sock, 0, MSG_DONTWAIT);
+    return (ret <= 0) ? -1 : 0;
+}
+
+//------------------------------------------------------------------------------
+static void
+turntcpchan_read(int fd, short ev, void *arg)
+{
+    struct turn_channel *channel = (struct turn_channel *) arg;
+
+    if (ev == EV_TIMEOUT || tcpchan_recv(channel) == -1) {
+        channel->s.tcp.shut_rd_pending = 1;
+    }
+
+    tcpchan_process_requests(channel);
+
+    if (channel->s.tcp.shut_rd_pending && b_num_avail(&channel->s.tcp.rbuf) == 0) {
+        tcpchan_shutrd(channel);
+    }
+
+    tcpchan_set_events(channel);
+}
+
+//------------------------------------------------------------------------------
+static int
+tcpchan_send(struct turn_channel *channel)
+{
+    int ret;
+
+    ret = b_send(&channel->s.tcp.wbuf, channel->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
+    return (ret < 0) ? -1 : 0;
+}
+
+//------------------------------------------------------------------------------
+static void
+turntcpchan_send(int fd, short ev, void *arg)
+{
+    struct turn_channel *channel = (struct turn_channel *) arg;
+
+    if (ev == EV_TIMEOUT || tcpchan_send(channel) == -1) {
+        tcpchan_shutwr(channel);
+    }
+
+    if (channel->s.tcp.shut_wr_pending && b_is_empty(&channel->s.tcp.wbuf)) {
+        tcpchan_shutwr(channel);
+    }
+
+    tcpchan_set_events(channel);
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpperm_free(struct turn_permission *permission)
+{
+    LIST_REMOVE(permission, entries);
+    s_free(permission);
+}
+
+//------------------------------------------------------------------------------
+static void
+tcpcli_free(struct turn_client *client)
+{
+    while (LIST_FIRST(&client->permissions) != NULL)
+        tcpperm_free(LIST_FIRST(&client->permissions));
+
+    while (LIST_FIRST(&client->channels) != NULL)
+        tcpchan_free(LIST_FIRST(&client->channels));
+
+    b_reset(&client->s.tcp.wbuf);
+    b_reset(&client->s.tcp.rbuf);
+    event_del(&client->s.tcp.ev_read);
+    event_del(&client->s.tcp.ev_write);
+    event_del(&client->ev_peer);
+
+    close(client->s.tcp.sock);
     if (client->peer != -1)
         close(client->peer);
 
-    if (client->buf)
-        s_free(client->buf);
-    s_free(client->channels);
-    s_free(client->perms);
-    s_free(client->ev_peerread);
-    s_free(client->ev_cliwrite);
-    s_free(client->ev_cliread);
+    LIST_REMOVE(client, entries);
     s_free(client);
 }
 
 //------------------------------------------------------------------------------
-static void
-client_queue_stun_frame(struct stun_message *stun, struct client *client)
+static int
+tcpcli_recv(struct turn_client *client)
 {
     int ret;
 
-    client->len = 1024;
-    do {
-        client->buf = s_realloc(client->buf, client->len);
-        ret = stun_to_bytes(client->buf, client->len, stun);
-        if (ret == -1)
-            client->len *= 2;
-    } while (ret == -1);
-    client->len = ret;
-    client->tag.channel = htons(TURN_CHANNEL_CTRL);
-    client->tag.length = htons(client->len);
-    client->pos = 0;
-    client->state = MUX_SPLICING_TO_CLIENT_WRITING_TAG;
-    stun_free(stun);
+    ret = b_recv(&client->s.tcp.rbuf, client->s.tcp.sock, 0, MSG_DONTWAIT);
+    return (ret <= 0) ? -1 : 0;
 }
 
 //------------------------------------------------------------------------------
 static void
-channel_queue_connstat(struct channel *channel, struct sockaddr *addr, socklen_t len, int status)
+turntcpcli_read(int fd, short ev, void *arg)
 {
-    struct client *client = channel->client;
-    struct stun_message *stun;
+    struct turn_client *client = (struct turn_client *) arg;
 
-    stun = stun_new(TURN_CHAN_CONF_INDICATION);
-    stun_set_peer_address(stun, addr, len);
-    stun->channel = channel->num_self;
-    stun->connect_status = status;
-    channel->clnt_confirm = 1;
-    client_queue_stun_frame(stun, client);
-}
-
-//------------------------------------------------------------------------------
-static void
-on_peer_shutrd(struct channel *channel)
-{
-    struct sockaddr addr;
-    socklen_t len = sizeof(addr);
-
-    event_del(channel->ev_peerread);
-    s_free(channel->ev_peerread);
-    channel->ev_peerread = NULL;
-    getsockname(channel->peer, &addr, &len);
-    channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_CLOSED);
-}
-
-//------------------------------------------------------------------------------
-static void
-on_peer_error(struct channel *channel)
-{
-    if (channel->ev_peerread)
-        on_peer_shutrd(channel);
-    if (channel->ev_peerwrite) {
-        event_del(channel->ev_peerwrite);
-        s_free(channel->ev_peerwrite);
-        channel->ev_peerwrite = NULL;
-    }
-
-    if (channel->peer != -1)
-        close(channel->peer);
-    channel->peer = -1;
-    channel->num_clnt = 0;
-}
-
-
-//------------------------------------------------------------------------------
-static int
-is_fatal(int ret, int err)
-{
-    return (ret == 0 || (ret == -1 && err != EAGAIN));
-}
-
-//------------------------------------------------------------------------------
-static int
-client_read_at_wait(struct client *client)
-{
-    client->state = MUX_SPLICING_FROM_CLIENT_READING_TAG;
-    client->pos = 0;
-    client->len = TURN_TAGLEN;
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_read_at_tag(struct client *client)
-{
-    int ret;
-
-    ret = recv(client->clnt,
-               client->pos + (uint8_t *)&client->tag,
-               client->len - client->pos,
-               MSG_DONTWAIT);
-    if (is_fatal(ret, errno)) {
-        on_client_error(client);
-        return -1;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->pos += ret;
-    if (client->pos == client->len) {
-        client->state = MUX_SPLICING_FROM_CLIENT_READING_DATA;
-        client->len = ntohs(client->tag.length);
-        client->buf = s_realloc(client->buf, client->len);
-        client->pos = 0;
-    }
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_frame_process(struct client *client)
-{
-    struct stun_message *request, *response;
-
-    /* Process control message */
-    request = stun_from_bytes(client->buf, &client->len);
-    if (!request) {
-        on_client_error(client);
-        return -1;
-    }
-
-    client->state = MUX_WAITING_FOR_DATA;
-    response = turn_stun_responder(request, client);
-    if (response)
-        client_queue_stun_frame(response, client);
-    stun_free(request);
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static void
-client_frame_forward(struct client *client)
-{
-    int i;
-
-    /* Queue delivery to peer */
-    for (i = 0; i < client->nchannels; i++)
-        if (client->channels[i]->num_clnt == ntohs(client->tag.channel)) {
-            client->out_channel = client->channels[i];
-            client->state = MUX_SPLICING_FROM_CLIENT_WRITING;
-            client->pos = 0;
-            return;
-        }
-
-    /* Unable to find peer */
-    s_free(client->buf);
-    client->len = 0;
-    client->buf = NULL;
-    client->state = MUX_WAITING_FOR_DATA;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_read_at_data(struct client *client)
-{
-    int ret;
-
-    ret = recv(client->clnt,
-               client->pos + client->buf,
-               client->len - client->pos,
-               MSG_DONTWAIT);
-    if (is_fatal(ret, errno)) {
-        on_client_error(client);
-        return -1;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->pos += ret;
-    if (client->pos == client->len) {
-        if (ntohs(client->tag.channel) != TURN_CHANNEL_CTRL)
-            client_frame_forward(client);
-        else
-            if (client_frame_process(client) == -1)
-                return -1;
-    }
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-peer_write_at_data(struct channel *channel)
-{
-    struct client *client = channel->client;
-    int ret;
-
-    ret = send(channel->peer,
-               client->buf + client->pos,
-               client->len - client->pos,
-               MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (is_fatal(ret, errno)) {
-        s_free(client->buf);
-        client->buf = NULL;
-        client->len = 0;
-        client->state = MUX_WAITING_FOR_DATA;
-        on_peer_error(channel);
-        return 0;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->pos += ret;
-    if (client->pos == client->len) {
-        s_free(client->buf);
-        client->buf = NULL;
-        client->len = 0;
-        client->state = MUX_WAITING_FOR_DATA;
-    }
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-peer_read_at_wait(struct channel *channel)
-{
-    struct client *client = channel->client;
-    client->state = MUX_SPLICING_TO_CLIENT_READING;
-    client->buf = s_realloc(client->buf, BUFFER_MAX);
-    client->len = BUFFER_MAX;
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-peer_read_at_data(struct channel *channel)
-{
-    struct client *client = channel->client;
-    int ret;
-
-    ret = recv(channel->peer, client->buf, client->len, MSG_DONTWAIT);
-    if (ret == 0) {
-        on_peer_shutrd(channel);
-        return 0;
-    } else if (is_fatal(ret, errno)) {
-        s_free(client->buf);
-        client->buf = NULL;
-        client->len = 0;
-        client->state = MUX_WAITING_FOR_DATA;
-        on_peer_error(channel);
-        return 0;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->len = ret;
-    client->pos = 0;
-    client->state = MUX_SPLICING_TO_CLIENT_WRITING_TAG;
-    client->tag.length = htons(client->len);
-    client->tag.channel = htons(channel->num_self);
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_write_at_tag(struct client *client)
-{
-    int ret;
-
-    ret = send(client->clnt,
-               client->pos + (uint8_t *)&client->tag,
-               TURN_TAGLEN - client->pos,
-               MSG_MORE | MSG_DONTWAIT);
-    if (is_fatal(ret, errno)) {
-        on_client_error(client);
-        return -1;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->pos += ret;
-    if (client->pos == TURN_TAGLEN) {
-        client->pos = 0;
-        client->state =  MUX_SPLICING_TO_CLIENT_WRITING_DATA;
-    }
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_write_at_data(struct client *client)
-{
-    int ret;
-
-    ret = send(client->clnt,
-               client->buf + client->pos,
-               client->len - client->pos,
-               MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (is_fatal(ret, errno)) {
-        on_client_error(client);
-        return -1;
-    } else if (ret < 0) {
-        return 0;
-    }
-    client->pos += ret;
-    if (client->pos == client->len) {
-        s_free(client->buf);
-        client->buf = NULL;
-        client->len = 0;
-        client->state = MUX_WAITING_FOR_DATA;
-    }
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static int
-client_do_maintainance(struct client *client)
-{
-    struct stun_message *stun;
-    struct channel *channel;
-    int i;
-
-    if (!client->need_maintain)
-        return 0;
-
-    /* Confirm the first client channel that hasn't been confirmed */
-    for (i = 0; i < client->nchannels; i++) {
-        channel = client->channels[i];
-        if (channel->num_clnt && !channel->self_confirm) {
-            channel->self_confirm = 1;
-            if (client->protocol == IPPROTO_UDP) {
-                assert(0);
-            }
-        }
-    }
-
-    return 0;
-}
-
-//------------------------------------------------------------------------------
-static void
-on_client_read(int fd, short ev, void *arg)
-{
-    struct client *client = (struct client *) arg;
-
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (client_read_at_wait(client) == -1)
-            return;
-
-    if (client->state == MUX_SPLICING_FROM_CLIENT_READING_TAG)
-        if (client_read_at_tag(client) == -1)
-            return;
-
-    if (client->state == MUX_SPLICING_FROM_CLIENT_READING_DATA)
-        if (client_read_at_data(client) == -1)
-            return;
-
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (client_do_maintainance(client) == -1)
-            return;
-
-    client_set_events(client);
-}
-
-//------------------------------------------------------------------------------
-static void
-on_peer_write(int fd, short ev, void *arg)
-{
-    struct channel *channel = (struct channel *) arg;
-    struct client *client = channel->client;
-
-    if (client->state == MUX_SPLICING_FROM_CLIENT_WRITING)
-        if (peer_write_at_data(channel) == -1)
-            return;
-
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (client_do_maintainance(client) == -1)
-            return;
-
-    client_set_events(client);
-}
-
-//------------------------------------------------------------------------------
-static void
-channel_set_peer(struct channel *channel, int peer)
-{
-    channel->peer = peer;
-    channel->ev_peerread = (struct event *) s_malloc(sizeof(struct event));
-    channel->ev_peerwrite = (struct event *) s_malloc(sizeof(struct event));
-    event_set(channel->ev_peerread, peer, EV_READ, on_peer_read, channel);
-    event_set(channel->ev_peerwrite, peer, EV_WRITE, on_peer_write, channel);
-}
-
-//------------------------------------------------------------------------------
-static void
-on_peer_accept(int fd, short ev, void *arg)
-{
-    struct client *client = (struct client *) arg;
-    struct channel *channel;
-    struct permission *perm;
-    int peer;
-    struct sockaddr addr;
-    socklen_t len;
-    int i;
-
-    assert(client->state == MUX_WAITING_FOR_DATA);
-
-    len = sizeof(addr);
-    if ((peer = accept(fd, &addr, &len)) == -1) {
-        client_set_events(client);
+    if (ev == EV_TIMEOUT || tcpcli_recv(client) == -1) {
+        tcpcli_free(client);
         return;
     }
 
-    for (i = 0; i < client->nperms; i++) {
-        perm = client->perms[i];
-        if (sockaddr_matches_addr(&addr, &perm->addr)) {
-            channel = channel_new(client, perm);
-            if (!channel) break;
-            channel_set_peer(channel, peer);
-            channel_queue_connstat(channel, &addr, len, TURN_CONNSTAT_ESTABLISHED);
-            client_set_events(client);
-            return;
-        }
-    }
-    close(peer);
-    client_set_events(client);
+    tcpcli_process_requests(client);
+    tcpcli_set_events(client);
+}
+
+//------------------------------------------------------------------------------
+static int
+tcpcli_send(struct turn_client *client)
+{
+    int ret;
+
+    ret = b_send(&client->s.tcp.wbuf, client->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
+    return (ret <= 0) ? -1 : 0;
 }
 
 //------------------------------------------------------------------------------
 static void
-on_peer_recvfrom(int fd, short ev, void *arg)
+turntcpcli_send(int fd, short ev, void *arg)
+{
+    struct turn_client *client = (struct turn_client *) arg;
+
+    if (ev == EV_TIMEOUT || tcpcli_send(client) == -1) {
+        tcpcli_free(client);
+        return;
+    }
+
+    tcpcli_set_events(client);
+}
+
+
+//------------------------------------------------------------------------------
+static void
+turnudp_recvpeer(int fd, short ev, void *arg)
 {
     assert(0);
 }
 
 //------------------------------------------------------------------------------
 static void
-on_peer_read(int fd, short ev, void *arg)
+turntcp_acceptpeer(int fd, short ev, void *arg)
 {
-    struct channel *channel = (struct channel *) arg;
-    struct client *client = channel->client;
+    struct turn_client *client = (struct turn_client *) arg;
+    struct turn_channel *channel;
+    struct turn_permission *perm;
+    struct sockaddr addr;
+    socklen_t len = sizeof(addr);
+    int cli;
 
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (peer_read_at_wait(channel) == -1)
-            return;
+    cli = accept(fd, &addr, &len);
+    if (cli == -1)
+        return;
+    perm = turnperm_find(client, &addr, len);
+    if (perm == NULL) {
+        close(cli);
+        return;
+    }
 
-    if (client->state == MUX_SPLICING_TO_CLIENT_READING)
-        if (peer_read_at_data(channel) == -1)
-            return;
+    channel = turntcp_newchannel(cli, &addr, len, client);
+    if (channel == NULL) {
+        close(cli);
+        return;
+    }
 
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (client_do_maintainance(client) == -1)
-            return;
-
-    client_set_events(client);
+    channel->permission = perm;
+    turnind_send_connstat(channel, &addr, len, TURN_CONNSTAT_ESTABLISHED);
 }
 
 //------------------------------------------------------------------------------
-static void
-on_client_write(int fd, short ev, void *arg)
+static struct turn_client *
+turntcp_newclient(int fd, struct sockaddr *addr, struct turn_server *server)
 {
-    struct client *client = (struct client *) arg;
+    struct turn_client *client;
 
-    if (client->state == MUX_SPLICING_TO_CLIENT_WRITING_TAG)
-        if (client_write_at_tag(client) == -1)
-            return;
-
-    if (client->state == MUX_SPLICING_TO_CLIENT_WRITING_DATA)
-        if (client_write_at_data(client) == -1)
-            return;
-
-    if (client->state == MUX_WAITING_FOR_DATA)
-        if (client_do_maintainance(client) == -1)
-            return;
-
-    client_set_events(client);
-}
-
-//------------------------------------------------------------------------------
-static struct client *
-client_new()
-{
-    struct client *client;
-    client = s_malloc(sizeof(struct client));
-    memset(client, 0, sizeof(struct client));
+    client = s_malloc(sizeof(struct turn_client));
+    memset(client, 0, sizeof(struct turn_client));
+    LIST_INSERT_HEAD(&server->clients, client, entries);
+    LIST_INIT(&client->permissions);
+    LIST_INIT(&client->channels);
+    client->s.tcp.sock = fd;
     client->peer = -1;
+    client->server = server;
+    if (addr)
+        client->addr = *addr;
+    event_set(&client->s.tcp.ev_read, fd, EV_READ, turntcpcli_read, client);
+    event_set(&client->s.tcp.ev_write, fd, EV_WRITE, turntcpcli_send, client);
+    event_base_set(server->sternd->base, &client->s.tcp.ev_read);
+    event_base_set(server->sternd->base, &client->s.tcp.ev_write);
+    tcpcli_set_events(client);
     return client;
 }
 
 //------------------------------------------------------------------------------
 static void
-on_srv_accept(int fd, short ev, void *arg)
+turntcp_acceptclient(int fd, short ev, void *arg)
 {
-    struct server *server = (struct server *) arg;
-    struct client *client;
+    struct turn_server *server = (struct turn_server *) arg;
+    struct turn_client *client;
+    struct sockaddr addr;
+    socklen_t len = sizeof(addr);
     int cli;
-    socklen_t len;
 
-    client = client_new();
-    if (!client) {
-        if ((cli = accept(fd, NULL, 0)) != -1)
-            close(cli);
+    cli = accept(fd, &addr, &len);
+    if (cli == -1)
         return;
-    }
-    len = sizeof(client->addr);
-    client->server = server;
-    client->clnt = accept(fd, &client->addr, &len);
-    client->state = MUX_WAITING_FOR_DATA;
-    client->ev_cliread = (struct event *) s_malloc(sizeof(struct event));
-    client->ev_cliwrite = (struct event *) s_malloc(sizeof(struct event));
-    event_set(client->ev_cliread, client->clnt, EV_READ, on_client_read, client);
-    event_set(client->ev_cliwrite, client->clnt, EV_WRITE, on_client_write, client);
-    client_set_events(client);
+    client = turntcp_newclient(cli, &addr, server);
+    if (!client)
+        close(cli);
 }
 
 //------------------------------------------------------------------------------
-void *
-turn_tcp_init()
+int
+sternd_set_turn_socket(int transport, int socket, int port)
 {
-    int fd;
     struct sockaddr_in sin;
     static int one = 1;
-    struct server *server;
 
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = INADDR_ANY;
-    sin.sin_port = htons(PORT_TURN);
-
-    fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    if (bind(fd, (struct sockaddr *) &sin, sizeof(sin))
-        || listen(fd, 5)) {
-        close(fd);
-        return NULL;
+    if (port != -1) {
+        sin.sin_family = AF_INET;
+        sin.sin_addr.s_addr = INADDR_ANY;
+        sin.sin_port = htons(port);
+        setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        if (bind(socket, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)))
+            return -1;
     }
 
-    server = (struct server *) s_malloc(sizeof(struct server));
-    server->sock = fd;
-    event_set(&server->ev_accept, fd, EV_READ | EV_PERSIST,
-              on_srv_accept, server);
-    event_add(&server->ev_accept, NULL);
-    return server;
+    if (transport == IPPROTO_TCP) {
+        if (sternd.turntcp.sock != -1) {
+            close(sternd.turntcp.sock);
+            event_del(&sternd.turntcp.s.tcp.ev_accept);
+        }
+        sternd.turntcp.sock = socket;
+        listen(socket, 5);
+        event_set(&sternd.turntcp.s.tcp.ev_accept, socket, EV_READ | EV_PERSIST, turntcp_acceptclient, &sternd.turntcp);
+        event_base_set(sternd.base, &sternd.turntcp.s.tcp.ev_accept);
+        event_add(&sternd.turntcp.s.tcp.ev_accept, NULL);
+        return 0;
+    } else {
+        return -1;
+    }
 }
+
+//------------------------------------------------------------------------------
+void
+sternd_turn_quit()
+{
+    while (LIST_FIRST(&sternd.turntcp.clients) != NULL) {
+        tcpcli_free(LIST_FIRST(&sternd.turntcp.clients));
+    }
+
+    if (sternd.turntcp.sock != -1) {
+        event_del(&sternd.turntcp.s.tcp.ev_accept);
+        close(sternd.turntcp.sock);
+        sternd.turntcp.sock = -1;
+    }
+}
+
