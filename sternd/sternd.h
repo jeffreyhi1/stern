@@ -155,7 +155,16 @@ struct sternd {
 
 extern struct sternd sternd;
 
+int stun_cannot_comprehend(struct stun_message *req);
+
 void sternd_init();
 int sternd_set_stun_socket(int transport, int socket, int port);
+int sternd_set_turn_socket(int transport, int socket, int port);
+void sternd_set_stun_timeout(int s, int us);
+void sternd_dispatch();
+void sternd_loop();
+void sternd_turn_quit();
+void sternd_stun_quit();
+void sternd_quit();
 
 #endif

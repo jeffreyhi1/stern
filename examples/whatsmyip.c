@@ -9,7 +9,9 @@ int main(int argc, char **argv)
 {
     struct sockaddr_in srv, *cli;
     char buf[1024];
-    unsigned int sock, len;
+    unsigned int sock;
+    size_t slen;
+    int len;
     struct stun_message *stun;
 
     /* Connect to the server */
@@ -33,7 +35,8 @@ int main(int argc, char **argv)
 
     /* Receive binding response */
     len = read(sock, buf, sizeof(buf));
-    if (len <= 0 || (stun = stun_from_bytes(buf, &len)) == NULL) {
+    slen = len;
+    if (len <= 0 || (stun = stun_from_bytes(buf, &slen)) == NULL) {
         perror("read");
         exit(1);
     }

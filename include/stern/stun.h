@@ -91,9 +91,6 @@ stun_from_bytes(char *buf, size_t *len);
 void
 stun_add_user_password(char *username, char *password, int len);
 
-void
-stun_add_xact_password(char *xact_id, char *password, int len);
-
 int
 stun_to_bytes(char *buf, size_t len, struct stun_message *stun);
 
@@ -105,6 +102,9 @@ stun_xid_matches(struct stun_message *a, struct stun_message *b);
 
 int
 stun_is_ok_response(struct stun_message *response, struct stun_message *request);
+
+int
+stun_is_err_response(struct stun_message *response, struct stun_message *request);
 
 void
 stun_set_data(struct stun_message *stun, char *buf, size_t len);
@@ -120,5 +120,8 @@ stun_set_peer_address(struct stun_message *stun, struct sockaddr *addr, socklen_
 
 void
 stun_set_relay_address(struct stun_message *stun, struct sockaddr *addr, socklen_t len);
+
+void
+stun_add_xact_password(unsigned char *xact_id, char *password, int len);
 
 #endif

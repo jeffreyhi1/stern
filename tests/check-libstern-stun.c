@@ -304,7 +304,7 @@ START_TEST(accessor_data)
     struct stun_message *stun = stun_new(STUN_BINDING_REQUEST);
     int buf[] = {rand(), rand(), rand(), rand()};
 
-    stun_set_data(stun, buf, sizeof(buf));
+    stun_set_data(stun, (char *)buf, sizeof(buf));
     fail_unless(stun->data_len == sizeof(buf), "Incorrect length");
     fail_unless(memcmp(stun->data, buf, sizeof(buf)) == 0, "Incorrect value");
 

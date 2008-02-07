@@ -70,12 +70,13 @@ cli_recv(int cli)
 {
     char buf[8192];
     struct stun_message *stun;
-    unsigned int len, olen;
+    size_t len;
+    int olen;
 
-    len = recv(cli, buf, sizeof(buf), 0);
-    if (len <= 0)
+    olen = recv(cli, buf, sizeof(buf), 0);
+    if (olen <= 0)
         return NULL;
-    olen = len;
+    len = olen;
     stun = stun_from_bytes(buf, &len);
     fail_if(stun == NULL, "Bad message");
     fail_if(olen != len, "Extra bytes");
@@ -294,7 +295,7 @@ static void
 do_stun_send_close(int cli, struct sockaddr *peer, socklen_t rlen, int chan, int fd)
 {
     struct stun_message *stun;
-    int i, len;
+    int i;
     char buf2[128];
 
     stun = stun_new(TURN_CHAN_CONF_INDICATION);
@@ -307,28 +308,6 @@ do_stun_send_close(int cli, struct sockaddr *peer, socklen_t rlen, int chan, int
 
     i = recv(fd, buf2, sizeof(buf2), 0);
     fail_if(i != 0, "Expending close");
-}
-
-static void
-do_stun_recv(int cli, int chan, int fd)
-{
-    int i, len;
-    char buffer[128], buf2[8192];
-    uint16_t tchan;
-    uint16_t tlen;
-
-    for(i = 0; i < sizeof(buffer); i++)
-        buffer[i] = random();
-    fail_if(send(fd, buffer, sizeof(buffer), 0) != sizeof(buffer), "Cannot send");
-    tchan = htons(chan);
-    tlen = htons(sizeof(buffer));
-
-    srv_loop();
-    len = recv(cli, buf2, sizeof(buf2), 0);
-    fail_if(len != sizeof(buffer) + TURN_TAGLEN, "Bad data length");
-    fail_unless(memcmp(&tchan, buf2, 2) == 0, "Incorrect channel");
-    fail_unless(memcmp(&tlen, buf2 + 2, 2) == 0, "Incorrect length");
-    fail_unless(memcmp(buffer, buf2 + TURN_TAGLEN, len - TURN_TAGLEN) == 0, "Incorrect data");
 }
 
 static void

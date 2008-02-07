@@ -182,11 +182,12 @@ stuntcp_accept(int fd, short ev, void *arg)
 static void
 stunudp_recv(int fd, short ev, void *arg)
 {
-    struct stun_server *server = (struct stun_server *) arg;
+    // struct stun_server *server = (struct stun_server *) arg;
     struct stun_message *request, *response;
     struct sockaddr addr;
     socklen_t len = sizeof(addr);
     char buf[BUFFER_MAX];
+    size_t slen;
     int ret;
 
     /* Receive message */
@@ -194,7 +195,8 @@ stunudp_recv(int fd, short ev, void *arg)
     if (ret <= 0) return;
 
     /* Process request */
-    request = stun_from_bytes(buf, &ret);
+    slen = ret;
+    request = stun_from_bytes(buf, &slen);
     if (request) {
         response = stun_default_responder(request, &addr);
         if (response) {

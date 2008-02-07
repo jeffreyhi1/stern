@@ -62,7 +62,7 @@ struct channel {
     int peer_confirm;   /* Whether server has confirmed our number   */
     int self_confirm;   /* Whether we have confirmed server's number */
     struct sockaddr addr;
-    size_t addrlen;
+    socklen_t addrlen;
 };
 
 struct turn_socket {
@@ -211,7 +211,6 @@ queue_raw_frame(struct turn_socket *turn, char *buf, size_t len, int chan)
 static void
 queue_stun_frame(struct turn_socket *turn, struct stun_message *stun)
 {
-    struct tag *tag;
     int ret = 0;
     struct buffer *wbuf = &turn->wbuf;
 

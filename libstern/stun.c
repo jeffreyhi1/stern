@@ -18,6 +18,7 @@
 
 static char *server = "sternd/1.0";
 
+#if 0
 //------------------------------------------------------------------------------
 static char *
 format_addr(char *buf, size_t len, struct sockaddr *addr)
@@ -40,6 +41,7 @@ format_addr(char *buf, size_t len, struct sockaddr *addr)
     buf[len - 1] = '\0';
     return buf;
 }
+#endif
 
 //------------------------------------------------------------------------------
 struct stun_message *

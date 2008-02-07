@@ -52,7 +52,7 @@ on_peer_shutrd(struct channel *channel)
 static int
 turnchan_getid(struct turn_client *client)
 {
-    int chan, i, tries = 10;
+    int chan, tries = 10;
     struct turn_channel *channel;
 
     do {

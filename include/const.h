@@ -101,4 +101,6 @@
 #define TURN_TAGLEN               4
 #define TURN_CHANNEL_CTRL         0
 
+#define SA(x)                     ((struct sockaddr *)(x))
+
 #endif
