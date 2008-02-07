@@ -445,6 +445,28 @@ START_TEST(turntcp_recv)
 END_TEST
 
 //------------------------------------------------------------------------------
+START_TEST(turntcp_multi_seq)
+{
+    struct sockaddr relay, peer;
+    socklen_t len;
+    int fd, cfd;
+
+    fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    do_allocate(cli, &relay, &len);
+    do_listen(cli);
+    do_permit(cli);
+    do_accept(cli, fd, &relay, &peer, &cfd, len);
+    do_raw_recv(cli, cfd, fd);
+    do_stun_recv_close(cli, &peer, len, cfd, fd);
+
+    fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    do_accept(cli, fd, &relay, &peer, &cfd, len);
+    do_raw_recv(cli, cfd, fd);
+    do_stun_recv_close(cli, &peer, len, cfd, fd);
+}
+END_TEST
+
+//------------------------------------------------------------------------------
 Suite *
 check_turnd()
 {
@@ -462,6 +484,7 @@ check_turnd()
     tcase_add_test(test, turntcp_accept);
     tcase_add_test(test, turntcp_send);
     tcase_add_test(test, turntcp_recv);
+    tcase_add_test(test, turntcp_multi_seq);
     suite_add_tcase(turnd, test);
 
     return turnd;

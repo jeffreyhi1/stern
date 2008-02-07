@@ -19,16 +19,16 @@
 //------------------------------------------------------------------------------
 int main(int argc, char **argv)
 {
-    int socktcp, sockudp, turntcp;
+    int stuntcp, stunudp, turntcp;
 
     sternd_init();
 
-    socktcp = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    sockudp = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    stuntcp = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    stunudp = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
     turntcp = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    sternd_set_stun_socket(IPPROTO_TCP, socktcp, PORT_STUN);
-    sternd_set_stun_socket(IPPROTO_UDP, sockudp, PORT_STUN);
-    sternd_set_turn_socket(IPPROTO_TCP, socktcp, PORT_TURN);
+    sternd_set_stun_socket(IPPROTO_TCP, stuntcp, PORT_STUN);
+    sternd_set_stun_socket(IPPROTO_UDP, stunudp, PORT_STUN);
+    sternd_set_turn_socket(IPPROTO_TCP, turntcp, PORT_TURN);
 
     sternd_dispatch();
 

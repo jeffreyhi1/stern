@@ -41,7 +41,7 @@ void b_shrink(struct buffer *buf);
 #define b_is_empty(buf)           ((buf)->len  == (buf)->pos)
 #define b_pos_avail(buf)          ((buf)->bytes + (buf)->pos)
 #define b_num_avail(buf)          ((buf)->len   - (buf)->pos)
-#define b_used_avail(buf, num)    do { (buf)->pos += (num); } while(0)
+#define b_used_avail(buf, num)    do { (buf)->pos += (num); if (b_is_empty((buf))) {(buf)->len  = 0; (buf)->pos = 0;} } while(0)
 #define b_pos_free(buf)           ((buf)->bytes + (buf)->len)
 #define b_num_free(buf)           ((buf)->size  - (buf)->len)
 #define b_used_free(buf, num)     do { (buf)->len += (num); } while(0)
