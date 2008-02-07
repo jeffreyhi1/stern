@@ -45,9 +45,9 @@ sternd_loop()
     int i;
     struct timeval tv = {0, 10000};
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 5; i++) {
         event_loopexit(&tv);
-        event_loop(EVLOOP_ONCE);
+        event_loop(EVLOOP_NONBLOCK);
     }
 }
 
