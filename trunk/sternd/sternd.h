@@ -19,6 +19,7 @@
 
 #include <netinet/in.h>
 #include <sys/time.h>
+#include <sys/queue.h>
 #include <unistd.h>
 #include <event.h>
 #include <string.h>
@@ -36,8 +37,49 @@
 
 #define CLIENT_TIMEOUT 120
 
-void *stun_tcp_init();
-void *stun_udp_init();
-void *turn_tcp_init();
+struct stun_clientstate_tcp {
+    int sock;
+    struct event ev_read, ev_write;
+    struct buffer request, response;
+};
+
+struct stun_clientstate_udp {
+};
+
+struct stun_client {
+    struct sockaddr addr;
+    union {
+        struct stun_clientstate_tcp tcp;
+        struct stun_clientstate_udp udp;
+    } s;
+    LIST_ENTRY(stun_client) entries;
+};
+
+struct stun_serverstate_tcp {
+    struct event ev_accept;
+};
+
+struct stun_serverstate_udp {
+    struct event ev_recv;
+};
+
+struct stun_server {
+    int sock;
+    struct sockaddr addr;
+    union {
+        struct stun_serverstate_tcp tcp;
+        struct stun_serverstate_udp udp;
+    } s;
+    LIST_HEAD(stun_clients, stun_client) clients;
+};
+
+struct sternd {
+    struct stun_server stuntcp, stunudp;
+};
+
+extern struct sternd sternd;
+
+void sternd_init();
+int sternd_set_stun_socket(int transport, int socket, int port);
 
 #endif

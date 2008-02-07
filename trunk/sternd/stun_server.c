@@ -14,108 +14,33 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <sys/queue.h>
-
 #include "sternd.h"
-
-struct server;
-
-struct serverstate_tcp {
-    struct event ev_accept;
-    struct timeval *client_timeout;
-};
-
-struct serverstate_udp {
-    struct event ev_recv;
-};
-
-struct clientstate_tcp {
-    int clisock;
-    struct event ev_read, ev_write;
-    struct buffer request, response;
-};
-
-struct clientstate_udp {
-};
-
-struct client {
-    struct server *server;
-    struct sockaddr addr;
-    union {
-        struct clientstate_tcp tcp;
-        struct clientstate_udp udp;
-    } s;
-    LIST_ENTRY(client) entries;
-};
-
-struct server {
-    int protocol;
-    int srvsock;
-    int closing;
-    struct sockaddr_in addr;
-    union {
-        struct serverstate_tcp tcp;
-        struct serverstate_udp udp;
-    } s;
-    LIST_HEAD(clients, client) clients;
-};
 
 static struct timeval timeout = { CLIENT_TIMEOUT, 0 };
 
 //------------------------------------------------------------------------------
 static void
-server_free(struct server *server)
+tcpcli_free(struct stun_client *client)
 {
-    assert(LIST_EMPTY(&server->clients));
-
-    if (server->srvsock != -1) {
-        close(server->srvsock);
-        if (server->protocol == IPPROTO_TCP)
-            event_del(&server->s.tcp.ev_accept);
-        else if (server->protocol == IPPROTO_UDP)
-            event_del(&server->s.udp.ev_recv);
-    }
-    s_free(server);
-}
-
-//------------------------------------------------------------------------------
-static void
-client_free(struct client *client)
-{
-    if (client->server->protocol == IPPROTO_TCP) {
-        if (client->s.tcp.clisock != -1)
-            close(client->s.tcp.clisock);
-        event_del(&client->s.tcp.ev_read);
-        event_del(&client->s.tcp.ev_write);
-        b_reset(&client->s.tcp.request);
-        b_reset(&client->s.tcp.response);
-    } else if (client->server->protocol == IPPROTO_UDP) {
-    }
+    if (client->s.tcp.sock != -1)
+        close(client->s.tcp.sock);
+    event_del(&client->s.tcp.ev_read);
+    event_del(&client->s.tcp.ev_write);
+    b_reset(&client->s.tcp.request);
+    b_reset(&client->s.tcp.response);
 
     LIST_REMOVE(client, entries);
-    if (LIST_EMPTY(&client->server->clients) && client->server->closing)
-        server_free(client->server);
-
     s_free(client);
 }
 
 //------------------------------------------------------------------------------
 static void
-client_set_events(struct client *client)
+tcpcli_set_events(struct stun_client *client)
 {
-    assert(client->server->protocol == IPPROTO_TCP);
-
     if (!b_is_empty(&client->s.tcp.response))
-        event_add(&client->s.tcp.ev_write, client->server->s.tcp.client_timeout);
+        event_add(&client->s.tcp.ev_write, &timeout);
     else
-        event_add(&client->s.tcp.ev_read, client->server->s.tcp.client_timeout);
-}
-
-//------------------------------------------------------------------------------
-static void
-client_expand_write_buffer(struct client *client)
-{
-    b_grow(&client->s.tcp.response);
+        event_add(&client->s.tcp.ev_read, &timeout);
 }
 
 //------------------------------------------------------------------------------
@@ -127,182 +52,148 @@ stun_default_responser(struct stun_message *request, struct sockaddr *addr)
 
 //------------------------------------------------------------------------------
 static void
-client_queue_response(struct client *client, struct stun_message *request)
+client_queue_response(struct stun_client *client, struct stun_message *request)
 {
-    int ret;
-    void *wbuf;
-    size_t wlen;
+    int ret = 0;
     struct stun_message *response;
-    struct clientstate_tcp *state = &client->s.tcp;
+    struct buffer *wbuf = &client->s.tcp.response;
 
-    if (client->server->closing)
-        return;
     response = stun_default_responser(request, &client->addr);
     if (response) {
-        ret = -1;
         do {
-            if (state->response.len == 0
-                || state->response.len - state->response.pos < BUFFER_MIN)
-                client_expand_write_buffer(client);
-            wbuf = state->response.bytes + state->response.pos;
-            wlen = state->response.len - state->response.pos;
-            ret = stun_to_bytes(wbuf, wlen, response);
+            if (ret == -1)
+                b_grow(wbuf);
+            ret = stun_to_bytes(b_pos_free(wbuf), b_num_free(wbuf), response);
         } while (ret == -1);
-        if (ret != -1)
-            state->response.pos += ret;
+        b_used_free(wbuf, ret);
         stun_free(response);
     }
 }
 
 //------------------------------------------------------------------------------
 static void
-client_process_requests(struct client *client)
+tcpcli_process_requests(struct stun_client *client)
 {
     int processed;
     size_t rlen;
-    void *rbuf;
     struct stun_message *request;
-    struct clientstate_tcp *state = &client->s.tcp;
+    struct buffer *rbuf = &client->s.tcp.request;
 
-    /* Process requests */
-    rbuf = state->request.bytes;
     do {
         processed = 0;
-        rlen = state->request.pos - (rbuf - state->request.bytes);
-        request = stun_from_bytes(rbuf, &rlen);
+        rlen = b_num_avail(rbuf);
+        request = stun_from_bytes(b_pos_avail(rbuf), &rlen);
         if (request) {
-            rbuf += rlen;
             processed = 1;
             client_queue_response(client, request);
             stun_free(request);
+            b_used_avail(rbuf, rlen);
         }
     } while (processed);
-
-    /* Shrink buffers */
-    b_shrink(&state->request);
 }
 
 //------------------------------------------------------------------------------
 static int
-client_read(struct client *client)
+tcpcli_recv(struct stun_client *client)
 {
     int ret;
-    struct clientstate_tcp *state = &client->s.tcp;
-    void *buf = state->request.bytes + state->request.pos;
-    size_t len = state->request.len - state->request.pos;
 
-    ret = read(client->s.tcp.clisock, buf, len);
+    ret = b_recv(&client->s.tcp.request, client->s.tcp.sock, 0, MSG_DONTWAIT);
     if (ret <= 0) {
-        client_free(client);
+        tcpcli_free(client);
         return -1;
     }
-    state->request.pos += ret;
     return 0;
 }
 
 //------------------------------------------------------------------------------
 static void
-client_expand_read_buffer(struct client *client)
+stuntcpcli_read(int fd, short ev, void *arg)
 {
-    b_grow(&client->s.tcp.request);
-}
+    struct stun_client *client = (struct stun_client *) arg;
 
-//------------------------------------------------------------------------------
-static void
-on_client_read(int fd, short ev, void *arg)
-{
-    struct client *client = (struct client *) arg;
-
-    if (ev == EV_TIMEOUT || client->server->closing) {
-        client_free(client);
+    if (ev == EV_TIMEOUT) {
+        tcpcli_free(client);
         return;
     }
-
-    if (client->s.tcp.request.len == 0
-        || client->s.tcp.request.len - client->s.tcp.request.pos < BUFFER_MIN)
-        client_expand_read_buffer(client);
-
-    if (client_read(client) == -1)
+    if (tcpcli_recv(client) == -1)
         return;
 
-    client_process_requests(client);
-
-    client_set_events(client);
+    tcpcli_process_requests(client);
+    tcpcli_set_events(client);
 }
 
 //------------------------------------------------------------------------------
 static int
-client_write(struct client *client)
+tcpcli_send(struct stun_client *client)
 {
     int ret;
 
-    ret = write(client->s.tcp.clisock, client->s.tcp.response.bytes, client->s.tcp.response.pos);
+    ret = b_send(&client->s.tcp.response, client->s.tcp.sock, MSG_DONTWAIT | MSG_NOSIGNAL);
     if (ret <= 0) {
-        client_free(client);
+        tcpcli_free(client);
         return -1;
     }
-    b_shrink(&client->s.tcp.response);
     return 0;
 }
 
 //------------------------------------------------------------------------------
 static void
-on_client_write(int fd, short ev, void *arg)
+stuntcpcli_send(int fd, short ev, void *arg)
 {
-    struct client *client = (struct client *) arg;
+    struct stun_client *client = (struct stun_client *) arg;
 
-    if (ev == EV_TIMEOUT || client->server->closing) {
-        client_free(client);
+    if (ev == EV_TIMEOUT) {
+        tcpcli_free(client);
         return;
     }
-
-    if (client_write(client) == -1)
+    if (tcpcli_send(client) == -1)
         return;
 
-    client_set_events(client);
+    tcpcli_set_events(client);
 }
 
 //------------------------------------------------------------------------------
-static struct client *
-client_new(int fd, struct sockaddr *addr, struct server *server)
+static struct stun_client *
+stuntcp_newclient(int fd, struct sockaddr *addr, struct sternd *sternd)
 {
-    struct client *client;
-    client = s_malloc(sizeof(struct client));
-    memset(client, 0, sizeof(struct client));
-    client->server = server;
-    LIST_INSERT_HEAD(&server->clients, client, entries);
-    client->s.tcp.clisock = fd;
+    struct stun_client *client;
+
+    client = s_malloc(sizeof(struct stun_client));
+    memset(client, 0, sizeof(struct stun_client));
+    LIST_INSERT_HEAD(&sternd->stuntcp.clients, client, entries);
+    client->s.tcp.sock = fd;
     if (addr)
         client->addr = *addr;
-    event_set(&client->s.tcp.ev_read, fd, EV_READ, on_client_read, client);
-    event_set(&client->s.tcp.ev_write, fd, EV_WRITE, on_client_write, client);
-    client_set_events(client);
+    event_set(&client->s.tcp.ev_read, fd, EV_READ, stuntcpcli_read, client);
+    event_set(&client->s.tcp.ev_write, fd, EV_WRITE, stuntcpcli_send, client);
+    tcpcli_set_events(client);
     return client;
 }
 
 //------------------------------------------------------------------------------
 static void
-on_srv_accept(int fd, short ev, void *arg)
+stuntcp_accept(int fd, short ev, void *arg)
 {
-    struct server *server = (struct server *) arg;
-    struct client *client;
+    struct sternd *sternd = (struct sternd *) arg;
+    struct stun_client *client;
     struct sockaddr addr;
-    int cli;
     socklen_t len = sizeof(addr);
+    int cli;
 
     cli = accept(fd, &addr, &len);
     if (cli == -1)
         return;
-    client = client_new(cli, &addr, server);
+    client = stuntcp_newclient(cli, &addr, sternd);
     if (!client)
         close(cli);
 }
 
 //------------------------------------------------------------------------------
 static void
-on_recv(int fd, short ev, void *arg)
+stunudp_recv(int fd, short ev, void *arg)
 {
-    struct server *server = (struct server *) arg;
+    struct sternd *sternd = (struct sternd *) arg;
     struct stun_message *request, *response;
     struct sockaddr addr;
     socklen_t len = sizeof(addr);
@@ -329,79 +220,71 @@ on_recv(int fd, short ev, void *arg)
 }
 
 //------------------------------------------------------------------------------
-void
-stun_tcp_stop(void *arg)
+int
+sternd_set_stun_socket(int transport, int socket, int port)
 {
-    struct server *server = (struct server *) arg;
-
-    server->closing = 1;
-    if (LIST_EMPTY(&server->clients))
-        server_free(server);
-}
-
-//------------------------------------------------------------------------------
-static struct server *
-server_new(int  fd)
-{
-    struct server *server;
-
-    server = (struct server *) s_malloc(sizeof(struct server));
-    server->srvsock = fd;
-    server->closing = 0;
-    server->s.tcp.client_timeout = &timeout;
-    if (fd != -1) {
-        event_set(&server->s.tcp.ev_accept, fd, EV_READ | EV_PERSIST, on_srv_accept, server);
-        event_add(&server->s.tcp.ev_accept, NULL);
-    }
-    return server;
-}
-
-//------------------------------------------------------------------------------
-void *
-stun_tcp_init()
-{
-    int fd;
     struct sockaddr_in sin;
     static int one = 1;
 
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = INADDR_ANY;
-    sin.sin_port = htons(PORT_STUN);
-
-    fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    if (bind(fd, (struct sockaddr *) &sin, sizeof(sin))
-        || listen(fd, 5)) {
-        close(fd);
-        return NULL;
+    if (port != -1) {
+        sin.sin_family = AF_INET;
+        sin.sin_addr.s_addr = INADDR_ANY;
+        sin.sin_port = htons(port);
+        setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        if (bind(socket, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)))
+            return -1;
     }
 
-    return server_new(fd);
+    if (transport == IPPROTO_TCP) {
+        if (sternd.stuntcp.sock != -1) {
+            close(sternd.stuntcp.sock);
+            event_del(&sternd.stuntcp.s.tcp.ev_accept);
+        }
+        sternd.stuntcp.sock = socket;
+        listen(socket, 5);
+        event_set(&sternd.stuntcp.s.tcp.ev_accept, socket, EV_READ | EV_PERSIST, stuntcp_accept, &sternd);
+        event_add(&sternd.stuntcp.s.tcp.ev_accept, NULL);
+        return 0;
+    } else if (transport == IPPROTO_UDP) {
+        if (sternd.stunudp.sock != -1) {
+            close(sternd.stunudp.sock);
+            event_del(&sternd.stuntcp.s.udp.ev_recv);
+        }
+        sternd.stunudp.sock = socket;
+        event_set(&sternd.stunudp.s.udp.ev_recv, socket, EV_READ|EV_PERSIST, stunudp_recv, &sternd);
+        event_add(&sternd.stunudp.s.udp.ev_recv, NULL);
+        return 0;
+    } else {
+        return -1;
+    }
 }
 
 //------------------------------------------------------------------------------
-void *
-stun_udp_init()
+int
+sternd_stun_quit()
 {
-    struct server *server;
-    static int one = 1;
+    struct stun_client *client;
 
-    server = (struct server *) s_malloc(sizeof(struct server));
 
-    server->addr.sin_family = AF_INET;
-    server->addr.sin_addr.s_addr = INADDR_ANY;
-    server->addr.sin_port = htons(PORT_STUN);
-
-    server->srvsock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    setsockopt(server->srvsock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    if (bind(server->srvsock, (struct sockaddr *)&server->addr, sizeof(server->addr))) {
-        close(server->srvsock);
-        s_free(server);
-        return NULL;
+    while (LIST_FIRST(&sternd.stuntcp.clients) != NULL) {
+        tcpcli_free(LIST_FIRST(&sternd.stuntcp.clients));
     }
 
-    event_set(&server->s.udp.ev_recv, server->srvsock, EV_READ|EV_PERSIST, on_recv, server);
-    event_add(&server->s.udp.ev_recv, NULL);
+    if (sternd.stuntcp.sock != -1) {
+        close(sternd.stuntcp.sock);
+        event_del(&sternd.stuntcp.s.tcp.ev_accept);
+    }
 
-    return server;
+    if (sternd.stunudp.sock != -1) {
+        close(sternd.stunudp.sock);
+        event_del(&sternd.stuntcp.s.udp.ev_recv);
+    }
+}
+
+//------------------------------------------------------------------------------
+int
+sternd_set_stun_timeout(int s, int us)
+{
+    timeout.tv_sec = s;
+    timeout.tv_usec = us;
 }

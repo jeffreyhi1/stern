@@ -28,6 +28,7 @@ check_sternd_LDADD = ../sternd/libsternd.la \
 check_sternd_coverage_SOURCES = $(check_sternd_SOURCES) \
 								../sternd/stun_server.c \
 								../sternd/turn_server.c \
+								../sternd/sternd.c \
 								../src/util.c \
 								../src/buffer.c
 check_sternd_coverage_LDADD = ../libstern/libstern.la
