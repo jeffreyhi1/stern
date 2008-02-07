@@ -510,9 +510,13 @@ START_TEST(tcpsock_bind)
             fail_unless(ret == -1 && errno == EAGAIN, "Expecting soft error");
             break;
 
+        case F_READERR_INTERRUPTED:
+            if (ret == -1 && errno == EAGAIN)
+                ret = turn_bind(tsock, NULL, 0);
+            // Fallthrough
+
         case F_ERROR:
         case F_READERR_SHUT:
-        case F_READERR_INTERRUPTED:
         case F_NO_RELAY_ADDRESS:
         case F_NO_XOR_MAPPED_ADDRESS:
             fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
@@ -769,7 +773,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(tcpsock_recvfrom_large)
 {
-    int ret, len, i;
+    int ret, len, tot, i;
     struct sockaddr_in sina, sinb;
     socklen_t blen = sizeof(sinb);
     char rbuf[1024];
@@ -796,30 +800,31 @@ START_TEST(tcpsock_recvfrom_large)
     for (i = 0; i < 10; i++) {
         len = sizeof(rbuf) + (rand() & 0xFF);
         mocksrv_do_recv(len, 1, fuzzes[_i]);
-
-        // Read sizeof(rbuf) bytes
-        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
         switch (fuzzes[_i]) {
             case F_SUCCESS:
-                fail_unless(ret == sizeof(rbuf), "Invalid size");
-                fail_unless(memcmp(rbuf, buf, ret) == 0, "Invalid data");
-                tcpsock_opmutex(~(T_GETSOCKNAME|T_RECVFROM|T_SENDTO));
-
-                // Read remaining bytes
-                ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
-                fail_unless(ret == (len - sizeof(rbuf)), "Invalid size");
-                fail_unless(memcmp(rbuf, buf + sizeof(rbuf), ret) == 0, "Invalid data");
-
+                tot = 0;
+                while (tot < len) {
+                    ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+                    if (ret == -1 && errno == EAGAIN)
+                        continue;
+                    fail_unless(ret > 0, "Invalid size");
+                    fail_unless(memcmp(rbuf, buf + tot, ret) == 0, "Invalid data");
+                    tot += ret;
+                    if (tot < len)
+                        tcpsock_opmutex(~(T_GETSOCKNAME|T_RECVFROM|T_SENDTO));
+                }
                 // Ensure no more data is pending
                 ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
                 fail_unless(ret == -1 && errno == EAGAIN, "Not waiting for data");
                 break;
 
             case F_CHANNEL:
+                ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
                 fail_unless(ret == -1 && errno == EAGAIN, "Expecting retry request");
                 return;
 
             case F_READERR_SHUT:
+                ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
                 fail_unless(ret == -1 && errno != EAGAIN, "Expecting hard error");
                 tcpsock_opmutex(~0);
                 return;
@@ -834,7 +839,7 @@ END_TEST
 //------------------------------------------------------------------------------
 START_TEST(tcpsock_recvfrom_eof)
 {
-    int ret, len, i;
+    int ret, len, tot, i;
     struct sockaddr_in sina, sinb;
     socklen_t blen = sizeof(sinb);
     char rbuf[1024];
@@ -867,10 +872,14 @@ START_TEST(tcpsock_recvfrom_eof)
         mocksrv_do_recv(len, 1, F_SUCCESS);
         mocksrv_do_shut((struct sockaddr *) &sina, sizeof(sina), 1, fuzzes[_i]);
 
-        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
-        fail_unless(ret == sizeof(rbuf), "Invalid size");
-        ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
-        fail_unless(ret == (len - sizeof(rbuf)), "Invalid size");
+        tot = 0;
+        while (tot < len) {
+            ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
+            if (ret == -1 && errno == EAGAIN)
+                continue;
+            fail_unless(ret > 0, "Invalid size");
+            tot += ret;
+        }
 
         ret = turn_recvfrom(tsock, rbuf, sizeof(rbuf), (struct sockaddr *) &sinb, &blen);
         switch (fuzzes[_i]) {
